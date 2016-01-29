@@ -444,6 +444,14 @@ static void _vec_mul_elements(Real* v, const Real* a, int dim) {
     v[i] = v[i] * a[i];
 }
 
+template<typename Real>
+__global__
+static void _vec_div_elements(Real* v, const Real* a, int dim) {
+  int32_cuda i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < dim)
+    v[i] = v[i] / a[i];
+}
+
 
 template<typename Real>
 __global__
@@ -2337,6 +2345,10 @@ void cudaF_vec_mul_elements(int Gr, int Bl, float* v, const float* a, int dim) {
   _vec_mul_elements<<<Gr,Bl>>>(v, a, dim);
 }
 
+void cudaF_vec_div_elements(int Gr, int Bl, float* v, const float* a, int dim) {
+  _vec_div_elements<<<Gr,Bl>>>(v, a, dim);
+}
+
 void cudaF_vec_min(const float* v, float* value, int dim) {
   _vec_min<<<1,CU1DBLOCK>>>(v, value, dim);
 }
@@ -2795,6 +2807,10 @@ void cudaD_copy_from_vec_fd(int Gr, int Bl, float* v_out, const double* v_in, in
 
 void cudaD_vec_mul_elements(int Gr, int Bl, double* v, const double* a, int dim) {
   _vec_mul_elements<<<Gr,Bl>>>(v, a, dim);
+}
+
+void cudaD_vec_div_elements(int Gr, int Bl, double* v, const double* a, int dim) {
+  _vec_div_elements<<<Gr,Bl>>>(v, a, dim);
 }
 
 void cudaD_vec_min(const double* v, double* value, int dim) {

@@ -113,25 +113,24 @@ void NnetChainTrainer::ProcessOutputs(const NnetChainExample &eg,
     bool use_xent = (opts_.chain_config.xent_regularize != 0.0);
     std::string xent_name = sup.name + "-xent";  // typically "output-xent".
     CuMatrix<BaseFloat> xent_deriv;
-    if (use_xent)
+    const CuMatrixBase<BaseFloat> *xent_output = NULL;
+    if (use_xent) {
       xent_deriv.Resize(nnet_output.NumRows(), nnet_output.NumCols(),
                         kUndefined);
-
+      // this block computes the cross-entropy objective.
+      xent_output = &(computer->GetOutput(xent_name));
+    }
     BaseFloat tot_objf, tot_l2_term, tot_weight;
-
     ComputeChainObjfAndDeriv(opts_.chain_config, den_graph_,
-                             sup.supervision, nnet_output,
+                             sup.supervision, nnet_output, xent_output,
                              &tot_objf, &tot_l2_term, &tot_weight,
                              &nnet_output_deriv,
                              (use_xent ? &xent_deriv : NULL));
 
     if (use_xent) {
-      // this block computes the cross-entropy objective.
-      const CuMatrixBase<BaseFloat> &xent_output = computer->GetOutput(
-          xent_name);
       // at this point, xent_deriv is posteriors derived from the numerator
       // computation.  note, xent_objf has a factor of '.supervision.weight'
-      BaseFloat xent_objf = TraceMatMat(xent_output, xent_deriv, kTrans);
+      BaseFloat xent_objf = TraceMatMat((*xent_output), xent_deriv, kTrans);
       objf_info_[xent_name].UpdateStats(xent_name, opts_.nnet_config.print_interval,
                                         num_minibatches_processed_,
                                         tot_weight, xent_objf);

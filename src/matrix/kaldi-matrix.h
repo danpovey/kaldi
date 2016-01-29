@@ -554,7 +554,7 @@ class MatrixBase {
   /// The same as adding M but scaling each column M_j by v(j).
   void AddMatDiagVec(const Real alpha,
                      const MatrixBase<Real> &M, MatrixTransposeType transM,
-                     VectorBase<Real> &v,
+                     const VectorBase<Real> &v,
                      Real beta = 1.0);
 
   /// *this = beta * *this + alpha * A .* B (.* element by element multiplication)

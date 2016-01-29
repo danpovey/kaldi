@@ -189,6 +189,7 @@ inline void cuda_set_bias_params(int Gr, int Bl, float* v, const float* a, float
 inline void cuda_copy_from_vec_df(int Gr, int Bl, double* v_out, const float* v_in, int dim) { cudaF_copy_from_vec_df(Gr,Bl,v_out,v_in,dim); }
 inline void cuda_copy_from_vec_fd(int Gr, int Bl, float* v_out, const float* v_in, int dim) { cudaF_copy_from_vec_fd(Gr,Bl,v_out,v_in,dim); }
 inline void cuda_vec_mul_elements(int Gr, int Bl, float* v, const float* a, int dim) { cudaF_vec_mul_elements(Gr,Bl,v,a,dim); }
+inline void cuda_vec_div_elements(int Gr, int Bl, float* v, const float* a, int dim) { cudaF_vec_div_elements(Gr,Bl,v,a,dim); }
 inline void cuda_vec_soft_max(int Gr, int Bl, float* v, int dim) { cudaF_vec_soft_max(Gr,Bl,v,dim); }
 inline void cuda_vec_min(const float* v, float* value, int dim) { cudaF_vec_min(v,value,dim); }
 inline void cuda_vec_max(const float* v, float* value, int dim) { cudaF_vec_max(v,value,dim); }
@@ -373,6 +374,7 @@ inline void cuda_set_bias_params(int Gr, int Bl, double* v, const double* a, dou
 inline void cuda_copy_from_vec_df(int Gr, int Bl, double* v_out, const double* v_in, int dim) { cudaD_copy_from_vec_df(Gr,Bl,v_out,v_in,dim); }
 inline void cuda_copy_from_vec_fd(int Gr, int Bl, float* v_out, const double* v_in, int dim) { cudaD_copy_from_vec_fd(Gr,Bl,v_out,v_in,dim); }
 inline void cuda_vec_mul_elements(int Gr, int Bl, double* v, const double* a, int dim) { cudaD_vec_mul_elements(Gr,Bl,v,a,dim); }
+inline void cuda_vec_div_elements(int Gr, int Bl, double* v, const double* a, int dim) { cudaD_vec_div_elements(Gr,Bl,v,a,dim); }
 inline void cuda_vec_soft_max(int Gr, int Bl, double* v, int dim) { cudaD_vec_soft_max(Gr,Bl,v,dim); }
 inline void cuda_vec_min(const double* v, double* value, int dim) { cudaD_vec_min(v,value,dim); }
 inline void cuda_vec_max(const double* v, double* value, int dim) { cudaD_vec_max(v,value,dim); }

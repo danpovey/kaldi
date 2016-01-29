@@ -448,7 +448,7 @@ template<typename Real>
 void MatrixBase<Real>::AddMatDiagVec(
     const Real alpha,
     const MatrixBase<Real> &M, MatrixTransposeType transM,
-    VectorBase<Real> &v,
+    const VectorBase<Real> &v,
     Real beta) {
 
   if (beta != 1.0) this->Scale(beta);

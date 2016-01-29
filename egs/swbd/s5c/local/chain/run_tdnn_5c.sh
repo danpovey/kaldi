@@ -1,33 +1,46 @@
 #!/bin/bash
 
-# _4x is as _4u, but with --leaky-hmm-coefficient 0.2.   Note: the
-# ultimate baseline is 4f.  It seems a little bit worse than 4u on average: (+0.2, +0.2, 0.0, -0.1).
-# So I'm guessing the best value is around --leaky-hmm-coefficient 0.1.
-#
-# ./compare_wer.sh  4f 4u 4x
-# System                       4f        4u        4x
-# WER on train_dev(tg)      16.83     16.47     16.63
-# WER on train_dev(fg)      15.73     15.23     15.42
-# WER on eval2000(tg)        18.4      18.4      18.4
-# WER on eval2000(fg)        16.6      16.7      16.6
-# Final train prob      -0.105832 -0.118911 -0.130674
-# Final valid prob      -0.123021 -0.135768 -0.146351
+# _5c is as _4w, but changing --xent-regularize to 0.05, since 0.2 seemed to be
+# worse than 0.1.
+# It seems a little worse on average: WER change is (+0.3, +0.3, -0.2, +0.2).
+#System                       4w        5c
+#WER on train_dev(tg)      16.05     16.35
+#WER on train_dev(fg)      14.92     15.21
+#WER on eval2000(tg)        18.0      17.8
+#WER on eval2000(fg)        16.2      16.4
+#Final train prob      -0.108816 -0.107098
+#Final valid prob      -0.118254 -0.118209
 
-# _4u is as _4t, but with --leaky-hmm-coefficient 0.08.  Note: the
-# ultimate baseline is 4f.
+# _4w is as _4v, but doubling --xent-regularize to 0.2.  WER seems consistently
+# a bit worse (+0.1, +0.2, +0.3, +0.2), although final valid prob is very
+# slightly better.
 
-#./compare_wer.sh 4f 4u
-#System                       4f        4u
-#WER on train_dev(tg)      16.83     16.47
-#WER on train_dev(fg)      15.73     15.23
-#WER on eval2000(tg)        18.4      18.4
-#WER on eval2000(fg)        16.6      16.7
-#Final train prob      -0.105832 -0.118911
-#Final valid prob      -0.123021 -0.135768
+#./compare_wer.sh 4v 4w
+#System                       4v        4w
+#WER on train_dev(tg)      15.95     16.05
+#WER on train_dev(fg)      14.69     14.92
+#WER on eval2000(tg)        17.7      18.0
+#WER on eval2000(fg)        16.0      16.2
+#Final train prob      -0.106646 -0.108816
+#Final valid prob      -0.118631 -0.118254
 
-# _4t is as _4s, but with --leaky-hmm-coefficient 0.04.
+# _4v is as _4r, but with --xent-regularize 0.1.  Increasing max_param_change
+# from 1.0 to 2.0 because there is a lot of parameter change in the final xent
+# layer, and this limits the rate of change of the other layers.
 
-# _4s is as _4f, but with --leaky-hmm-coefficient 0.02.  [A new option.]
+# _4r is as _4f, but one more hidden layer, and reducing context of existing
+# layers so we can re-use the egs.  Reducing jesus-forward-output-dim slightly
+# from 1500 to 1400.
+
+# This is better than 4f by almost all metrics.
+# ./compare_wer.sh 4f 4r
+# System                       4f        4r
+# WER on train_dev(tg)      16.83     16.50
+# WER on train_dev(fg)      15.73     15.45
+# WER on eval2000(tg)        18.4      18.3
+# WER on eval2000(fg)        16.6      16.7
+# Final train prob      -0.105832 -0.103652
+# Final valid prob      -0.123021 -0.121105
 
 # _4f is as _4e, but halving the regularization from 0.0001 to 0.00005.
 
@@ -252,14 +265,14 @@ stage=12
 train_stage=-10
 get_egs_stage=-10
 speed_perturb=true
-dir=exp/chain/tdnn_4x # Note: _sp will get added to this if $speed_perturb == true.
+dir=exp/chain/tdnn_5c # Note: _sp will get added to this if $speed_perturb == true.
 
 # training options
 num_epochs=4
 initial_effective_lrate=0.001
 final_effective_lrate=0.0001
 leftmost_questions_truncate=-1
-max_param_change=1.0
+max_param_change=2.0
 final_layer_normalize_target=0.5
 num_jobs_initial=3
 num_jobs_final=16
@@ -344,11 +357,11 @@ if [ $stage -le 12 ]; then
  touch $dir/egs/.nodelete # keep egs around when that run dies.
 
  steps/nnet3/chain/train_tdnn.sh --stage $train_stage \
-    --leaky-hmm-coefficient 0.2 \
+    --xent-regularize 0.05 \
     --l2-regularize 0.00005 \
     --egs-dir exp/chain/tdnn_2y_sp/egs \
-    --jesus-opts "--jesus-forward-input-dim 400  --jesus-forward-output-dim 1500 --jesus-hidden-dim 7500 --jesus-stddev-scale 0.2 --final-layer-learning-rate-factor 0.25" \
-    --splice-indexes "-1,0,1 -1,0,1,2 -3,0,3 -6,-3,0,3 -6,-3,0,3" \
+    --jesus-opts "--jesus-forward-input-dim 400  --jesus-forward-output-dim 1400 --jesus-hidden-dim 7500 --jesus-stddev-scale 0.2 --final-layer-learning-rate-factor 0.25" \
+    --splice-indexes "-1,0,1 -1,0,1,2 -3,0,3 -3,0,3 -3,0,3 -6,-3,0" \
     --apply-deriv-weights false \
     --frames-per-iter 1200000 \
     --lm-opts "--num-extra-lm-states=2000" \
