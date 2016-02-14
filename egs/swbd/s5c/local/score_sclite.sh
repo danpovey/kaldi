@@ -7,7 +7,9 @@ stage=0
 min_lmwt=5
 max_lmwt=20
 reverse=false
+iter=final
 word_ins_penalty=0.0,0.5,1.0
+get_conf=false
 #end configuration section.
 
 [ -f ./path.sh ] && . ./path.sh
@@ -28,7 +30,7 @@ data=$1
 lang=$2 # Note: may be graph directory not lang directory, but has the necessary stuff copied.
 dir=$3
 
-model=$dir/../final.mdl # assume model one level up from decoding dir.
+model=$dir/../$iter.mdl # assume model one level up from decoding dir.
 
 hubscr=$KALDI_ROOT/tools/sctk/bin/hubscr.pl
 [ ! -f $hubscr ] && echo "Cannot find scoring program at $hubscr" && exit 1;
@@ -62,16 +64,28 @@ mkdir -p $dir/scoring/log
 
 if [ $stage -le 0 ]; then
   for wip in $(echo $word_ins_penalty | sed 's/,/ /g'); do
-    $cmd LMWT=$min_lmwt:$max_lmwt $dir/scoring/log/get_ctm.LMWT.${wip}.log \
-      mkdir -p $dir/score_LMWT_${wip}/ '&&' \
-      lattice-scale --lm-scale=LMWT "ark:gunzip -c $dir/lat.*.gz|" ark:- \| \
-      lattice-add-penalty --word-ins-penalty=$wip ark:- ark:- \| \
-      lattice-1best ark:- ark:- \| \
-      lattice-align-words $reorder_opt $lang/phones/word_boundary.int $model ark:- ark:- \| \
-      nbest-to-ctm $frame_shift_opt ark:- - \| \
-      utils/int2sym.pl -f 5 $lang/words.txt  \| \
-      utils/convert_ctm.pl $data/segments $data/reco2file_and_channel \
-      '>' $dir/score_LMWT_${wip}/$name.ctm || exit 1;
+    if ! $get_conf; then
+      $cmd LMWT=$min_lmwt:$max_lmwt $dir/scoring/log/get_ctm.LMWT.${wip}.log \
+        mkdir -p $dir/score_LMWT_${wip}/ '&&' \
+        lattice-scale --lm-scale=LMWT "ark:gunzip -c $dir/lat.*.gz|" ark:- \| \
+        lattice-add-penalty --word-ins-penalty=$wip ark:- ark:- \| \
+        lattice-1best ark:- ark:- \| \
+        lattice-align-words $reorder_opt $lang/phones/word_boundary.int $model ark:- ark:- \| \
+        nbest-to-ctm $frame_shift_opt ark:- - \| \
+        utils/int2sym.pl -f 5 $lang/words.txt  \| \
+        utils/convert_ctm.pl $data/segments $data/reco2file_and_channel \
+        '>' $dir/score_LMWT_${wip}/$name.ctm || exit 1;
+    else
+      $cmd LMWT=$min_lmwt:$max_lmwt $dir/scoring/log/get_ctm.LMWT.${wip}.log \
+        mkdir -p $dir/score_LMWT_${wip}/ '&&' \
+        lattice-scale --lm-scale=LMWT "ark:gunzip -c $dir/lat.*.gz|" ark:- \| \
+        lattice-add-penalty --word-ins-penalty=$wip ark:- ark:- \| \
+        lattice-align-words $reorder_opt $lang/phones/word_boundary.int $model ark:- ark:- \| \
+        lattice-to-ctm-conf $frame_shift_opt ark:- - \| \
+        utils/int2sym.pl -f 5 $lang/words.txt  \| \
+        utils/convert_ctm.pl $data/segments $data/reco2file_and_channel \
+        '>' $dir/score_LMWT_${wip}/$name.ctm || exit 1;
+    fi
   done
 fi
 

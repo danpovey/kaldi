@@ -1895,6 +1895,7 @@ void CuMatrixBase<Real>::CopyRowsFromVec(const CuVectorBase<Real> &v) {
       GetBlockSizesForSimpleMatrixOperation(NumRows(), NumCols(),
                                             &dimGrid, &dimBlock);
       cuda_copy_rows_from_vec(dimGrid, dimBlock, data_, this->Dim(), v.Data());
+      CU_SAFE_CALL(cudaGetLastError());
     } else {
       KALDI_ERR << "Wrong sized arguments";
     }
@@ -2016,6 +2017,24 @@ void CuMatrixBase<Real>::ApplyHeaviside() {
   }
 }
 
+template<typename Real>
+void CuMatrixBase<Real>::ApplySignum() {
+#if HAVE_CUDA == 1
+  if (CuDevice::Instantiate().Enabled()) {
+    Timer tim;
+    dim3 dimBlock(CU2DBLOCK, CU2DBLOCK);
+    dim3 dimGrid(n_blocks(NumRows(), CU2DBLOCK),
+                 n_blocks(NumCols(), CU2DBLOCK));
+
+    cuda_apply_heaviside(dimGrid, dimBlock, data_, Dim());
+    CU_SAFE_CALL(cudaGetLastError());
+    CuDevice::Instantiate().AccuProfile(__func__, tim.Elapsed());
+  } else
+#endif
+  {
+    Mat().ApplySignum();
+  }
+}
 
 template<typename Real>
 void CuMatrixBase<Real>::ApplyExp() {

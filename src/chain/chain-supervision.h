@@ -364,42 +364,27 @@ void AppendSupervision(const std::vector<const Supervision*> &input,
                        std::vector<Supervision> *output_supervision);
 
 
-/// This function helps you to pseudo-randomly split a sequence of length 'num_frames',
-/// interpreted as frames 0 ... num_frames - 1, into pieces of length exactly
-/// 'frames_per_range', to be used as examples for training.  Because frames_per_range
-/// may not exactly divide 'num_frames', this function will leave either small gaps or
-/// small overlaps in pseudo-random places.
-/// The output 'range_starts' will be set to a list of the starts of ranges, the
-/// output ranges are of the form
-/// [ (*range_starts)[i] ... (*range_starts)[i] + frames_per_range - 1 ].
-void SplitIntoRanges(int32 num_frames,
-                     int32 frames_per_range,
-                     std::vector<int32> *range_starts);
 
-
-/// This utility function is not used directly in the 'chain' code.  It is used
-/// to get weights for the derivatives, so that we don't doubly train on some
-/// frames after splitting them up into overlapping ranges of frames.  The input
-/// 'range_starts' will be obtained from 'SplitIntoRanges', but the
-/// 'range_length', which is a length in frames, may be longer than the one
-/// supplied to SplitIntoRanges, due the 'overlap'.  (see the calling code...
-/// if we want overlapping ranges, we get it by 'faking' the input to
-/// SplitIntoRanges).
-///
-/// The output vector 'weights' will be given the same dimension as
-/// 'range_starts'.  By default the output weights in '*weights' will be vectors
-/// of all ones, of length equal to 'range_length', and '(*weights)[i]' represents
-/// the weights given to frames numbered
-///   t = range_starts[i] ... range_starts[i] + range_length - 1.
-/// If these ranges for two successive 'i' values overlap, then we
-/// reduce the weights to ensure that no 't' value gets a total weight
-/// greater than 1.  We do this by dividing the overlapped region
-/// into three approximately equal parts, and giving the left part
-/// to the left range; the right part to the right range; and
-/// in between, interpolating linearly.
-void GetWeightsForRanges(int32 range_length,
-                         const std::vector<int32> &range_starts,
-                         std::vector<Vector<BaseFloat> > *weights);
+/// This is a newer version of GetWeightsForRanges with a simpler behavior
+/// than GetWeightsForRanges and a different purpose.  Instead of aiming to
+/// create weights that sum to one over the whole file, the purpose is to
+/// zero out the derivative weights for a certain number of frames to each
+/// side of every 'cut point' in the numerator lattice [by numerator lattice,
+/// what I mean is the FST that we automatically generate from the numerator
+/// alignment or lattice].  So we don't zero out the weights for the very
+/// beginning or very end of each original utterance, just those where
+/// we split the utterance into pieces.  We believe there is an incentive
+/// for the network to produce deletions near the edges, and this aims to fix
+/// this problem.
+/// range_length is the length of each range of times (so range_starts[0]
+/// represents the start of a range of t values of length 'range_length'
+/// and so range_starts[1] etc.), and num_frames_zeroed is the number of frames
+/// on each side of the cut point on which we are supposed to zero out the
+/// derivative.
+void GetWeightsForRangesNew(int32 range_length,
+                            int32 num_frames_zeroed,
+                            const std::vector<int32> &range_starts,
+                            std::vector<Vector<BaseFloat> > *weights);
 
 
 typedef TableWriter<KaldiObjectHolder<Supervision> > SupervisionWriter;
