@@ -6,7 +6,8 @@ include ../kaldi.mk
 LDFLAGS += $(CUDA_LDFLAGS)
 LDLIBS += $(CUDA_LDLIBS)
 
-BINFILES = nnet3-init nnet3-info nnet3-get-egs nnet3-copy-egs nnet3-subset-egs \
+BINFILES = nnet3-init nnet3-info nnet3-get-egs nnet3-copy-egs nnet3-fold-egs \
+   nnet3-xvector-signal-perturb-egs nnet3-subset-egs \
    nnet3-shuffle-egs nnet3-acc-lda-stats nnet3-merge-egs \
    nnet3-compute-from-egs nnet3-train nnet3-am-init nnet3-am-train-transitions \
    nnet3-am-adjust-priors nnet3-am-copy nnet3-compute-prob \
@@ -25,7 +26,7 @@ TESTFILES =
 ADDLIBS = ../chain/kaldi-chain.a ../nnet3/kaldi-nnet3.a ../gmm/kaldi-gmm.a \
          ../decoder/kaldi-decoder.a ../lat/kaldi-lat.a ../hmm/kaldi-hmm.a  \
          ../transform/kaldi-transform.a ../tree/kaldi-tree.a \
-         ../thread/kaldi-thread.a ../cudamatrix/kaldi-cudamatrix.a \
+         ../thread/kaldi-thread.a ../feat/kaldi-feat.a ../cudamatrix/kaldi-cudamatrix.a \
          ../matrix/kaldi-matrix.a ../fstext/kaldi-fstext.a \
          ../util/kaldi-util.a ../base/kaldi-base.a
 
