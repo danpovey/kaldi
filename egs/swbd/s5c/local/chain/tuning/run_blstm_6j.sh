@@ -12,7 +12,7 @@ stage=12
 train_stage=-10
 get_egs_stage=-10
 speed_perturb=true
-dir=exp/chain/lstm_6j # Note: _sp will get added to this if $speed_perturb == true.
+dir=exp/chain/blstm_6j  # Note: _sp will get added to this if $speed_perturb == true.
 decode_iter=
 decode_dir_affix=
 
@@ -20,17 +20,17 @@ decode_dir_affix=
 leftmost_questions_truncate=-1
 chunk_width=150
 chunk_left_context=40
-chunk_right_context=0
+chunk_right_context=40
 xent_regularize=0.025
 self_repair_scale=0.00001
-label_delay=5
+label_delay=0
 # decode options
 extra_left_context=50
-extra_right_context=0
+extra_right_context=50
 frames_per_chunk=
 
 remove_egs=false
-common_egs_dir=exp/chain/lstm_6j_old_sp/egs
+common_egs_dir=
 
 affix=
 # End configuration section.
@@ -121,12 +121,17 @@ if [ $stage -le 12 ]; then
   fixed-affine-layer name=lda input=Append(-2,-1,0,1,2,ReplaceIndex(ivector, t, 0)) affine-transform-file=$dir/configs/lda.mat
 
   # check steps/libs/nnet3/xconfig/lstm.py for the other options and defaults
-  lstmp-layer name=lstm1 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
-  lstmp-layer name=lstm2 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
-  lstmp-layer name=lstm3 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
+  lstmp-layer name=blstm1-forward input=lda cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
+  lstmp-layer name=blstm1-backward input=lda cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=3
+
+  lstmp-layer name=blstm2-forward input=Append(blstm1-forward, blstm1-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
+  lstmp-layer name=blstm2-backward input=Append(blstm1-forward, blstm1-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=3
+
+  lstmp-layer name=blstm3-forward input=Append(blstm2-forward, blstm2-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
+  lstmp-layer name=blstm3-backward input=Append(blstm2-forward, blstm2-backward) cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=3
 
   ## adding the layers for chain branch
-  output-layer name=output input=lstm3 output-delay=$label_delay include-log-softmax=false dim=$num_targets max-change=1.5
+  output-layer name=output input=Append(blstm3-forward, blstm3-backward) output-delay=$label_delay include-log-softmax=false dim=$num_targets max-change=1.5
 
   # adding the layers for xent branch
   # This block prints the configs for a separate output that will be
@@ -137,7 +142,7 @@ if [ $stage -le 12 ]; then
   # final-layer learns at a rate independent of the regularization
   # constant; and the 0.5 was tuned so as to make the relative progress
   # similar in the xent and regular final layers.
-  output-layer name=output-xent input=lstm3 output-delay=$label_delay dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
+  output-layer name=output-xent input=Append(blstm3-forward, blstm3-backward) output-delay=$label_delay dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
 
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
@@ -201,7 +206,7 @@ if [ $stage -le 15 ]; then
   fi
   for decode_set in train_dev eval2000; do
       (
-       steps/nnet3/decode.sh --acwt 1.0 --post-decode-acwt 10.0 \
+      steps/nnet3/decode.sh --acwt 1.0 --post-decode-acwt 10.0 \
           --nj 50 --cmd "$decode_cmd" $iter_opts \
           --extra-left-context $extra_left_context  \
           --extra-right-context $extra_right_context  \

@@ -1,38 +1,35 @@
 #!/bin/bash
 
-# 6j is same as 6i but using the xconfig format of network specification.
+
+# 7g is same as 7f but using the xconfig format of network specification.
 # Also, the model is trained without layer-wise discriminative pretraining.
-# Another minor change is that the final-affine component has param-stddev-0
-# and bias-stddev=0 initialization.
 
 set -e
 
 # configs for 'chain'
+affix=
 stage=12
 train_stage=-10
 get_egs_stage=-10
 speed_perturb=true
-dir=exp/chain/lstm_6j # Note: _sp will get added to this if $speed_perturb == true.
+dir=exp/chain/tdnn_7g  # Note: _sp will get added to this if $speed_perturb == true.
 decode_iter=
-decode_dir_affix=
 
 # training options
+num_epochs=4
+initial_effective_lrate=0.001
+final_effective_lrate=0.0001
 leftmost_questions_truncate=-1
-chunk_width=150
-chunk_left_context=40
-chunk_right_context=0
-xent_regularize=0.025
-self_repair_scale=0.00001
-label_delay=5
-# decode options
-extra_left_context=50
-extra_right_context=0
-frames_per_chunk=
-
+max_param_change=2.0
+final_layer_normalize_target=0.5
+num_jobs_initial=3
+num_jobs_final=16
+minibatch_size=128
+frames_per_eg=150
 remove_egs=false
-common_egs_dir=exp/chain/lstm_6j_old_sp/egs
+common_egs_dir=
+xent_regularize=0.1
 
-affix=
 # End configuration section.
 echo "$0 $@"  # Print the command line for logging
 
@@ -57,9 +54,7 @@ if [ "$speed_perturb" == "true" ]; then
   suffix=_sp
 fi
 
-dir=$dir${affix:+_$affix}
-if [ $label_delay -gt 0 ]; then dir=${dir}_ld$label_delay; fi
-dir=${dir}$suffix
+dir=${dir}${affix:+_$affix}$suffix
 train_set=train_nodup$suffix
 ali_dir=exp/tri4_ali_nodup$suffix
 treedir=exp/chain/tri5_7d_tree$suffix
@@ -74,7 +69,7 @@ local/nnet3/run_ivector_common.sh --stage $stage \
 
 
 if [ $stage -le 9 ]; then
-  # Get the alignments as lattices (gives the CTC training more freedom).
+  # Get the alignments as lattices (gives the LF-MMI training more freedom).
   # use the same num-jobs as the alignments
   nj=$(cat exp/tri4_ali_nodup$suffix/num_jobs) || exit 1;
   steps/align_fmllr_lats.sh --nj $nj --cmd "$train_cmd" data/$train_set \
@@ -97,12 +92,19 @@ if [ $stage -le 10 ]; then
 fi
 
 if [ $stage -le 11 ]; then
-  # Build a tree using our new topology.
+  # Build a tree using our new topology. This is the critically different
+  # step compared with other recipes.
   steps/nnet3/chain/build_tree.sh --frame-subsampling-factor 3 \
       --leftmost-questions-truncate $leftmost_questions_truncate \
       --context-opts "--context-width=2 --central-position=1" \
       --cmd "$train_cmd" 7000 data/$train_set $lang $ali_dir $treedir
 fi
+
+# TDNN options
+# this script uses the new tdnn config generator so it needs a final 0 to reflect that the final layer input has no splicing
+splice_indexes="-1,0,1 -1,0,1 -1,0,1 -3,0,3 -3,0,3 -6,0,6 0"
+# smoothing options
+
 
 if [ $stage -le 12 ]; then
   echo "$0: creating neural net configs using the xconfig parser";
@@ -118,15 +120,23 @@ if [ $stage -le 12 ]; then
   # please note that it is important to have input layer with the name=input
   # as the layer immediately preceding the fixed-affine-layer to enable
   # the use of short notation for the descriptor
-  fixed-affine-layer name=lda input=Append(-2,-1,0,1,2,ReplaceIndex(ivector, t, 0)) affine-transform-file=$dir/configs/lda.mat
+  fixed-affine-layer name=lda input=Append(-1,0,1,ReplaceIndex(ivector, t, 0)) affine-transform-file=$dir/configs/lda.mat
 
-  # check steps/libs/nnet3/xconfig/lstm.py for the other options and defaults
-  lstmp-layer name=lstm1 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
-  lstmp-layer name=lstm2 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
-  lstmp-layer name=lstm3 cell-dim=1024 recurrent-projection-dim=256 non-recurrent-projection-dim=256 delay=-3
+  # the first splicing is moved before the lda layer, so no splicing here
+  relu-renorm-layer name=tdnn1 dim=625
+  relu-renorm-layer name=tdnn2 input=Append(-1,0,1) dim=625
+  relu-renorm-layer name=tdnn3 input=Append(-1,0,1) dim=625
+  relu-renorm-layer name=tdnn4 input=Append(-3,0,3) dim=625
+  relu-renorm-layer name=tdnn5 input=Append(-3,0,3) dim=625
+  # it doesn't make sense to have -6,0,6 splicing for a chain model
+  # as we compute a sequence of outputs and computation can be shared
+  # this has to be split into two -3,0,3 layers. But I will keep this
+  # to have same setup as 7f
+  relu-renorm-layer name=tdnn6 input=Append(-6,0,6) dim=625
 
   ## adding the layers for chain branch
-  output-layer name=output input=lstm3 output-delay=$label_delay include-log-softmax=false dim=$num_targets max-change=1.5
+  relu-renorm-layer name=prefinal-chain input=tdnn6 dim=625 target-rms=0.5
+  output-layer name=output include-log-softmax=false dim=$num_targets max-change=1.5
 
   # adding the layers for xent branch
   # This block prints the configs for a separate output that will be
@@ -137,11 +147,14 @@ if [ $stage -le 12 ]; then
   # final-layer learns at a rate independent of the regularization
   # constant; and the 0.5 was tuned so as to make the relative progress
   # similar in the xent and regular final layers.
-  output-layer name=output-xent input=lstm3 output-delay=$label_delay dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
+  relu-renorm-layer name=prefinal-xent input=tdnn6 dim=625 target-rms=0.5
+  output-layer name=output-xent dim=$num_targets learning-rate-factor=$learning_rate_factor max-change=1.5
 
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
 fi
+
+exit 1;
 
 if [ $stage -le 13 ]; then
   if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $dir/egs/storage ]; then
@@ -158,28 +171,24 @@ if [ $stage -le 13 ]; then
     --chain.l2-regularize 0.00005 \
     --chain.apply-deriv-weights false \
     --chain.lm-opts="--num-extra-lm-states=2000" \
-    --chain.left-deriv-truncate 0 \
-    --trainer.num-chunk-per-minibatch 64 \
-    --trainer.frames-per-iter 1200000 \
-    --trainer.max-param-change 2.0 \
-    --trainer.num-epochs 4 \
-    --trainer.optimization.shrink-value 0.99 \
-    --trainer.optimization.num-jobs-initial 3 \
-    --trainer.optimization.num-jobs-final 16 \
-    --trainer.optimization.initial-effective-lrate 0.001 \
-    --trainer.optimization.final-effective-lrate 0.0001 \
-    --trainer.optimization.momentum 0.0 \
+    --egs.dir "$common_egs_dir" \
     --egs.stage $get_egs_stage \
     --egs.opts "--frames-overlap-per-eg 0" \
-    --egs.chunk-width $chunk_width \
-    --egs.chunk-left-context $chunk_left_context \
-    --egs.chunk-right-context $chunk_right_context \
-    --egs.dir "$common_egs_dir" \
+    --egs.chunk-width $frames_per_eg \
+    --trainer.num-chunk-per-minibatch $minibatch_size \
+    --trainer.frames-per-iter 1500000 \
+    --trainer.num-epochs $num_epochs \
+    --trainer.optimization.num-jobs-initial $num_jobs_initial \
+    --trainer.optimization.num-jobs-final $num_jobs_final \
+    --trainer.optimization.initial-effective-lrate $initial_effective_lrate \
+    --trainer.optimization.final-effective-lrate $final_effective_lrate \
+    --trainer.max-param-change $max_param_change \
     --cleanup.remove-egs $remove_egs \
     --feat-dir data/${train_set}_hires \
     --tree-dir $treedir \
     --lat-dir exp/tri4_lats_nodup$suffix \
     --dir $dir  || exit 1;
+
 fi
 
 if [ $stage -le 14 ]; then
@@ -192,27 +201,20 @@ fi
 decode_suff=sw1_tg
 graph_dir=$dir/graph_sw1_tg
 if [ $stage -le 15 ]; then
-  [ -z $extra_left_context ] && extra_left_context=$chunk_left_context;
-  [ -z $extra_right_context ] && extra_right_context=$chunk_right_context;
-  [ -z $frames_per_chunk ] && frames_per_chunk=$chunk_width;
   iter_opts=
   if [ ! -z $decode_iter ]; then
     iter_opts=" --iter $decode_iter "
   fi
   for decode_set in train_dev eval2000; do
       (
-       steps/nnet3/decode.sh --acwt 1.0 --post-decode-acwt 10.0 \
+      steps/nnet3/decode.sh --acwt 1.0 --post-decode-acwt 10.0 \
           --nj 50 --cmd "$decode_cmd" $iter_opts \
-          --extra-left-context $extra_left_context  \
-          --extra-right-context $extra_right_context  \
-          --frames-per-chunk "$frames_per_chunk" \
           --online-ivector-dir exp/nnet3/ivectors_${decode_set} \
-         $graph_dir data/${decode_set}_hires \
-         $dir/decode_${decode_set}${decode_dir_affix:+_$decode_dir_affix}_${decode_suff} || exit 1;
+          $graph_dir data/${decode_set}_hires $dir/decode_${decode_set}${decode_iter:+_$decode_iter}_${decode_suff} || exit 1;
       if $has_fisher; then
           steps/lmrescore_const_arpa.sh --cmd "$decode_cmd" \
             data/lang_sw1_{tg,fsh_fg} data/${decode_set}_hires \
-            $dir/decode_${decode_set}${decode_dir_affix:+_$decode_dir_affix}_sw1_{tg,fsh_fg} || exit 1;
+            $dir/decode_${decode_set}${decode_iter:+_$decode_iter}_sw1_{tg,fsh_fg} || exit 1;
       fi
       ) &
   done

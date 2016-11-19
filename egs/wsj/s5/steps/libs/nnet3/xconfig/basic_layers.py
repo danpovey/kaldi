@@ -610,8 +610,7 @@ class XconfigBasicLayer(XconfigLayerBase):
                         'target-rms' : 1.0}
 
     def set_derived_configs(self):
-
-        super(XconfigAffineLayer, self).set_derived_configs()
+        super(XconfigBasicLayer, self).set_derived_configs()
         if self.config['param-stddev'] < 0:
             self.config['param-stddev'] = 1.0 / self.descriptors['input']['dim']
 
@@ -714,9 +713,9 @@ class XconfigBasicLayer(XconfigLayerBase):
                             "{0}".format(nonlinearity), self.str())
 
                 ans.append((config_name, line))
-                line = 'component-node name={0}.{1}'
-                ' component={0}.{1} input={2}'
-                ''.format(self.name, nonlinearity, cur_node)
+                line = ('component-node name={0}.{1}'
+                        ' component={0}.{1} input={2}'
+                        ''.format(self.name, nonlinearity, cur_node))
 
                 ans.append((config_name, line))
                 cur_node = '{0}.{1}'.format(self.name, nonlinearity)
