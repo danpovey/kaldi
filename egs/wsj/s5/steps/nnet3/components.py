@@ -484,4 +484,4 @@ def AddBLstmLayer(config_lines,
             'descriptor': output_descriptor,
             'dimension':output_dim
             }
- 
+
