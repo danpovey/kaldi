@@ -4,6 +4,19 @@
 # 7g is same as 7f but using the xconfig format of network specification.
 # Also, the model is trained without layer-wise discriminative pretraining.
 
+
+# System                  7f     7g
+# WER on train_dev(tg)    14.46  13.85
+# WER on train_dev(fg)    13.23  12.67
+# WER on eval2000(tg)     17.0   16.5
+# WER on eval2000(fg)     15.4   14.8
+# Final train prob     -0.0882071 -0.0885075
+# Final valid prob     -0.107545  -0.113462
+# Final train prob (xent) -1.26246 -1.25788
+# Final valid prob (xent) -1.35525 -1.37058
+
+
+
 set -e
 
 # configs for 'chain'
@@ -27,7 +40,7 @@ num_jobs_final=16
 minibatch_size=128
 frames_per_eg=150
 remove_egs=false
-common_egs_dir=
+#common_egs_dir=exp/chain/tdnn_7e_sp/egs
 xent_regularize=0.1
 
 # End configuration section.
@@ -153,8 +166,6 @@ if [ $stage -le 12 ]; then
 EOF
   steps/nnet3/xconfig_to_configs.py --xconfig-file $dir/configs/network.xconfig --config-dir $dir/configs/
 fi
-
-exit 1;
 
 if [ $stage -le 13 ]; then
   if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d $dir/egs/storage ]; then
