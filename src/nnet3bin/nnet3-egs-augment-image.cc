@@ -64,7 +64,7 @@ struct ImageAugmentationConfig {
 };
 
 
-/* Flips the image horizontally. */
+// Flips the image horizontally. 
 void HorizontalFlip(MatrixBase<BaseFloat> *image) {
   int32 num_rows = image->NumRows();
   Vector<BaseFloat> temp(image->NumCols());
@@ -77,7 +77,7 @@ void HorizontalFlip(MatrixBase<BaseFloat> *image) {
   }
 }
 
-/* Shifts the image horizontally by 'horizontal_shift' (+ve == to the right).*/
+ // Shifts the image horizontally by 'horizontal_shift' (+ve == to the right).
 void HorizontalShift(int32 horizontal_shift,
                      MatrixBase<BaseFloat> *image) {
   int32 num_rows = image->NumRows(), num_cols = image->NumCols();
@@ -136,11 +136,6 @@ void VerticalShift(int32 vertical_shift,
 }
 
       
-
-
-
-
-
 
 /**
   This function randomly modifies (perturbs) the image.
