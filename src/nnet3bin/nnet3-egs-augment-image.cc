@@ -47,7 +47,7 @@ struct ImageAugmentationConfig {
                  "Probability of doing horizontal flip");
     po->Register("horizontal-shift", &horizontal_shift,
                  "Maximum allowed horizontal shift as proportion of image "
-                 "height.  Padding is with closest pixel.");
+                 "width.  Padding is with closest pixel.");
     po->Register("vertical-shift", &vertical_shift,
                  "Maximum allowed vertical shift as proportion of image "
                  "height.  Padding is with closest pixel.");
