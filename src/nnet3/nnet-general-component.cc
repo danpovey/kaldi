@@ -1522,6 +1522,8 @@ std::string GeneralDropoutComponent::Info() const {
          << ", dropout-proportion=" << dropout_proportion_;
   if (continuous_)
     stream << ", continuous=true";
+  if (per_frame_)
+    stream << ", per_frame=true";
   if (time_period_ > 0)
     stream << ", time-period=" << time_period_;
   return stream.str();
@@ -1529,7 +1531,7 @@ std::string GeneralDropoutComponent::Info() const {
 
 GeneralDropoutComponent::GeneralDropoutComponent():
     dim_(-1), block_dim_(-1), time_period_(0),
-    dropout_proportion_(0.5), continuous_(false) { }
+    dropout_proportion_(0.5), continuous_(false), per_frame_(false) { }
 
 GeneralDropoutComponent::GeneralDropoutComponent(
     const GeneralDropoutComponent &other):
@@ -1537,7 +1539,8 @@ GeneralDropoutComponent::GeneralDropoutComponent(
     block_dim_(other.block_dim_),
     time_period_(other.time_period_),
     dropout_proportion_(other.dropout_proportion_),
-    continuous_(other.continuous_) { }
+    continuous_(other.continuous_),
+    per_frame_(other.per_frame_) { }
 
 void* GeneralDropoutComponent::Propagate(
     const ComponentPrecomputedIndexes *indexes_in,
@@ -1620,6 +1623,12 @@ void GeneralDropoutComponent::Read(std::istream &is, bool binary) {
   ReadBasicType(is, binary, &time_period_);
   ExpectToken(is, binary, "<DropoutProportion>");
   ReadBasicType(is, binary, &dropout_proportion_);
+  if (PeekToken(is, binary) == 'P') {
+    ExpectToken(is, binary, "<PerframeDropout>");
+    per_frame_ = true;
+  } else {
+    per_frame_ = false;
+  } 
   if (PeekToken(is, binary) == 'T') {
     ExpectToken(is, binary, "<TestMode>");
     test_mode_ = true;
@@ -1646,6 +1655,8 @@ void GeneralDropoutComponent::Write(std::ostream &os, bool binary) const {
   WriteBasicType(os, binary, time_period_);
   WriteToken(os, binary, "<DropoutProportion>");
   WriteBasicType(os, binary, dropout_proportion_);
+  if (per_frame_)
+    WriteToken(os, binary, "<PerframeDropout>");
   if (test_mode_)
     WriteToken(os, binary, "<TestMode>");
   if (continuous_)
@@ -1670,6 +1681,8 @@ void GeneralDropoutComponent::InitFromConfig(ConfigLine *cfl) {
   cfl->GetValue("time-period", &time_period_);
   dropout_proportion_ = 0.5;
   cfl->GetValue("dropout-proportion", &dropout_proportion_);
+  per_frame_ = false;
+  cfl->GetValue("dropout-per-frame", &per_frame_);
   continuous_ = false;
   cfl->GetValue("continuous", &continuous_);
   test_mode_ = false;
@@ -1689,16 +1702,37 @@ CuMatrix<BaseFloat>* GeneralDropoutComponent::GetMemo(
   const_cast<CuRand<BaseFloat>&>(random_generator_).RandUniform(ans);
 
   if (!continuous_) {
-    ans->Add(-dropout_proportion);
-    // now, a proportion "dropout_proportion" will be < 0.0. After applying the
-    // function (x>0?1:0), a proportion "dropout_proportion" will be zero and (1 -
-    // dropout_proportion) will be 1.0.
-    ans->ApplyHeaviside();
-    ans->Scale(1.0 / dropout_proportion);
+    if (!per_frame_) {
+      ans->Add(-dropout_proportion);
+      // now, a proportion "dropout_proportion" will be < 0.0. After applying the
+      // function (x>0?1:0), a proportion "dropout_proportion" will be zero and (1 -
+      // dropout_proportion) will be 1.0.
+      ans->ApplyHeaviside();
+      ans->Scale(1.0 / dropout_proportion);
+    } else {
+      // randomize the dropout matrix by row,
+      // i.e. [[1,1,1,1],[0,0,0,0],[0,0,0,0],[1,1,1,1],[0,0,0,0]]
+      CuMatrix<BaseFloat> tmp(1, num_mask_rows, kUndefined);
+      // This const_cast is only safe assuming you don't attempt
+      // to use multi-threaded code with the GPU.
+      const_cast<CuRand<BaseFloat>&>(random_generator_).RandUniform(&tmp);
+      tmp.Add(-dropout_proportion);
+      tmp.ApplyHeaviside();
+      ans->CopyColsFromVec(tmp.Row(0));
+    }
   } else {
-    ans->Scale(dropout_proportion * 4.0);
-    // make the expected value 1.0.
-    ans->Add(1.0 - (2.0 * dropout_proportion));
+    if (!per_frame_) {
+      ans->Scale(dropout_proportion * 4.0);
+      // make the expected value 1.0.
+      ans->Add(1.0 - (2.0 * dropout_proportion));
+    } else {
+      CuMatrix<BaseFloat> tmp(1, num_mask_rows, kUndefined);
+      const_cast<CuRand<BaseFloat>&>(random_generator_).RandUniform(&tmp);
+      tmp.Scale(dropout_proportion * 4.0);
+      // make the expected value 1.0.
+      tmp.Add(1.0 - (2.0 * dropout_proportion));
+      ans->CopyColsFromVec(tmp.Row(0));
+    }
   }
   return ans;
 }

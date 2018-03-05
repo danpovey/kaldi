@@ -908,6 +908,8 @@ class GeneralDropoutComponent: public RandomComponent {
 
   bool continuous_;
 
+  bool per_frame_;
+
   bool test_mode_;
 
   const GeneralDropoutComponent &operator
