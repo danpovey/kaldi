@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # This is based on tdnn_7q, but adding cnn as the front-end.
@@ -119,13 +120,13 @@ if [ $stage -le 12 ]; then
   num_targets=$(tree-info $treedir/tree |grep num-pdfs|awk '{print $2}')
   learning_rate_factor=$(echo "print 0.5/$xent_regularize" | python)
 
-  cnn_opts="l2-regularize=0.03"
-  ivector_affine_opts="l2-regularize=0.03"
-  tdnnf_first_opts="l2-regularize=0.03 dropout-proportion=0.0 bypass-scale=0.0"
-  tdnnf_opts="l2-regularize=0.03 dropout-proportion=0.0 bypass-scale=0.66"
-  linear_opts="l2-regularize=0.03 orthonormal-constraint=-1.0"
-  prefinal_opts="l2-regularize=0.03"
-  output_opts="l2-regularize=0.015"
+  cnn_opts="l2-regularize=0.01"
+  ivector_affine_opts="l2-regularize=0.01"
+  tdnnf_first_opts="l2-regularize=0.01 dropout-proportion=0.0 bypass-scale=0.0"
+  tdnnf_opts="l2-regularize=0.01 dropout-proportion=0.0 bypass-scale=0.66"
+  linear_opts="l2-regularize=0.01 orthonormal-constraint=-1.0"
+  prefinal_opts="l2-regularize=0.01"
+  output_opts="l2-regularize=0.002"
 
   mkdir -p $dir/configs
   cat <<EOF > $dir/configs/network.xconfig
@@ -139,12 +140,12 @@ if [ $stage -le 12 ]; then
   batchnorm-component name=ivector-batchnorm target-rms=0.025
   batchnorm-component name=idct-batchnorm input=idct
   combine-feature-maps-layer name=combine_inputs input=Append(idct-batchnorm, ivector-batchnorm) num-filters1=1 num-filters2=5 height=40
-  conv-relu-batchnorm-layer name=cnn1 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=48 learning-rate-factor=0.333 max-change=0.25
-  conv-relu-batchnorm-layer name=cnn2 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=48
-  conv-relu-batchnorm-layer name=cnn3 $cnn_opts height-in=40 height-out=20 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
-  conv-relu-batchnorm-layer name=cnn4 $cnn_opts height-in=20 height-out=20 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
-  conv-relu-batchnorm-layer name=cnn5 $cnn_opts height-in=20 height-out=10 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
-  conv-relu-batchnorm-layer name=cnn6 $cnn_opts height-in=10 height-out=5 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
+  conv-relu-batchnorm-layer name=cnn1 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64 
+  conv-relu-batchnorm-layer name=cnn2 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
+  conv-relu-batchnorm-layer name=cnn3 $cnn_opts height-in=40 height-out=20 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
+  conv-relu-batchnorm-layer name=cnn4 $cnn_opts height-in=20 height-out=20 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
+  conv-relu-batchnorm-layer name=cnn5 $cnn_opts height-in=20 height-out=20 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
+  conv-relu-batchnorm-layer name=cnn6 $cnn_opts height-in=20 height-out=20  time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
   # the first TDNN-F layer has no bypass (since dims don't match), and a larger bottleneck so the
   # information bottleneck doesn't become a problem.  (we use time-stride=0 so no splicing, to
   # limit the num-parameters).
