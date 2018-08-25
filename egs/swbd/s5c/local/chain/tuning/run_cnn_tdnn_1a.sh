@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # This is based on tdnn_7q, but adding cnn as the front-end.
@@ -6,25 +5,20 @@
 
 # local/chain/compare_wer_general.sh --rt03 tdnn7q_sp cnn_tdnn1a_sp
 # System                tdnn7q_sp cnn_tdnn1a_sp
-# WER on train_dev(tg)      12.08     12.13
-# WER on train_dev(fg)      11.15     11.16
-# WER on eval2000(tg)        14.1      14.1
-# WER on eval2000(fg)        12.8      12.6
-# WER on rt03(tg)            17.5      17.3
+# WER on train_dev(tg)      12.08     11.97
+# WER on train_dev(fg)      11.15     11.12
+# WER on eval2000(tg)        14.1      13.9
+# WER on eval2000(fg)        12.8      12.5
+# WER on rt03(tg)            17.5      17.1
 # WER on rt03(fg)            15.3      14.9
-# Final train prob         -0.055    -0.057
+# Final train prob         -0.055    -0.056
 # Final valid prob         -0.072    -0.075
-# Final train prob (xent)        -0.875    -0.877
-# Final valid prob (xent)       -0.9064   -0.9134
-# Num-parameters               18725244  14597020
-
-# CPU info for decoding test: Intel(R) Xeon(R) CPU E5-2640 v4 @ 2.40GHz
-# real time factor (RTF) for tdnn_7q is ~0.491
-# RTF for cnn_tdnn_1a is ~0.597
-
+# Final train prob (xent)        -0.875    -0.871
+# Final valid prob (xent)       -0.9064   -0.9110
+# Num-parameters               18725244  15187100
 
 # steps/info/chain_dir_info.pl exp/chain/cnn_tdnn1a_sp
-# exp/chain/cnn_tdnn1a_sp: num-iters=394 nj=3..16 num-params=14.6M dim=40+100->6078 combine=-0.055->-0.055 (over 5) xent:train/valid[261,393,final]=(-1.05,-0.885,-0.877/-1.07,-0.920,-0.913) logprob:train/valid[261,393,final]=(-0.078,-0.058,-0.057/-0.091,-0.076,-0.075)
+# exp/chain/cnn_tdnn1a_sp: num-iters=394 nj=3..16 num-params=15.2M dim=40+100->6078 combine=-0.054->-0.054 (over 7) xent:train/valid[261,393,final]=(-1.03,-0.878,-0.871/-1.06,-0.918,-0.911) logprob:train/valid[261,393,final]=(-0.076,-0.057,-0.056/-0.091,-0.076,-0.075)
 set -e
 
 # configs for 'chain'
@@ -144,8 +138,8 @@ if [ $stage -le 12 ]; then
   conv-relu-batchnorm-layer name=cnn2 $cnn_opts height-in=40 height-out=40 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=64
   conv-relu-batchnorm-layer name=cnn3 $cnn_opts height-in=40 height-out=20 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
   conv-relu-batchnorm-layer name=cnn4 $cnn_opts height-in=20 height-out=20 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
-  conv-relu-batchnorm-layer name=cnn5 $cnn_opts height-in=20 height-out=20 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
-  conv-relu-batchnorm-layer name=cnn6 $cnn_opts height-in=20 height-out=20  time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=128
+  conv-relu-batchnorm-layer name=cnn5 $cnn_opts height-in=20 height-out=10 height-subsample-out=2 time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=256
+  conv-relu-batchnorm-layer name=cnn6 $cnn_opts height-in=10 height-out=10  time-offsets=-1,0,1 height-offsets=-1,0,1 num-filters-out=256
   # the first TDNN-F layer has no bypass (since dims don't match), and a larger bottleneck so the
   # information bottleneck doesn't become a problem.  (we use time-stride=0 so no splicing, to
   # limit the num-parameters).
