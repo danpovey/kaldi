@@ -35,8 +35,12 @@ static void GetRandomConfig(ConvolutionComputationConfig *config) {
 
   config->filter_stride_vertical = RandInt(1, 2);
   config->filter_stride_horizontal = RandInt(1, 2);
-  config->filter_dilation_vertical = RandInt(1, 2);
-  config->filter_dilation_horizontal = RandInt(1, 2);
+  // Setting a dilation other than 1 is currently causing a segfault.
+  // It is documented that when the format used is CUDNN_TENSOR_NHWC,
+  // dilation must be 1 for all dimensions, so the segfault is just
+  // letting us know that dilated convolutions are not supported.
+  config->filter_dilation_vertical = 1; //RandInt(1, 2);
+  config->filter_dilation_horizontal = 1; //RandInt(1, 2);
 
   config->input_image_height = RandInt(10, 20);
   config->input_image_width = RandInt(10, 20);

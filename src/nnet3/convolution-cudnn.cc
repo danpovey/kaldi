@@ -37,6 +37,24 @@ void CheckCorrectness(CudnnAlgoPerfT perf_results, const char* function) {
     KALDI_ERR << function << " had an error: " <<
         cudnnGetErrorString(perf_results.status);
 }
+
+void GenerateStrides(const int* dimA, int* strideA, int nbDims, bool isNchw) {
+  // Adopted from conv_sample.cpp in the CUDNN samples.
+  if (isNchw) {
+    strideA[nbDims-1] = 1 ;
+    for(int d = nbDims-2 ; d >= 0 ; d--) {
+      strideA[d] = strideA[d+1] * dimA[d+1] ;
+    }
+  } else {
+    strideA[1] = 1;
+    strideA[nbDims-1] = strideA[1]*dimA[1];
+    for(int d = nbDims-2 ; d >= 2 ; d--) {
+      strideA[d] = strideA[d+1] * dimA[d+1] ;
+    }
+    strideA[0] = strideA[2]*dimA[2];
+  }
+}
+
 }
 
 
@@ -181,12 +199,11 @@ void ConvolutionComputation::InitCudnn() {
   // We use cudnnSetTensorNdDescriptor because of bugs in cudnnSetTensor4dDescriptor.
   int in_dims[4] = {c.num_images, c.num_channels_in, c.input_image_width,
                     c.input_image_height};
-  int in_stride[4] = {c.num_channels_in * c.input_image_width * c.input_image_height,
-                      c.input_image_width * c.input_image_height,
-                      c.input_image_height, 1};
+  int in_strides[4];
+  GenerateStrides(in_dims, in_strides, 4, false);
   CUDNN_SAFE_CALL(
       cudnnSetTensorNdDescriptor(input_desc_, CUDNN_DATA_BASEFLOAT, 4, in_dims,
-                                 in_stride));
+                                 in_strides));
   // Again: width and height are swapped.
   CUDNN_SAFE_CALL(
       cudnnSetConvolution2dDescriptor(
@@ -194,24 +211,24 @@ void ConvolutionComputation::InitCudnn() {
           c.zero_padding_horizontal, c.zero_padding_vertical,
           c.filter_stride_horizontal, c.filter_stride_vertical,
           c.filter_dilation_horizontal, c.filter_dilation_vertical,
-          CUDNN_CROSS_CORRELATION, // TODO: Double check this!
+          CUDNN_CROSS_CORRELATION, // TODO: Double check that the current Kaldi convolution implementation is also doing CROSS_CORRELATION.
           CUDNN_DATA_BASEFLOAT));
 
   // Set dimensions of the filters (linear parameters).
   // Again: width and height are swapped.  Per the CUDNN documentation at
   // https://docs.nvidia.com/deeplearning/sdk/pdf/cuDNN-Developer-Guide.pdf for
-  // cudnnSetFilter4dDescriptor, setting CUDNN_TENSOR_NCHW as the layout
-  // corresponds to KCRS, meaning: num-channels-out, num-channels-in, height, width,
+  // cudnnSetFilter4dDescriptor, setting CUDNN_TENSOR_NHWC as the layout
+  // corresponds to KRSC, meaning: num-channels-out, height, width, num-channels-in
   // where 'height' and 'width' are the filter height and width respectively (e.g. 3
   // and 3 for a 3x3 patch); and these are swapped w.r.t. Kaldi's notion of height and
   // width, so as far as Kaldi is concerned, the strides are, from largest to
   // smallest: num-channels-out, width, height, num-channels-in: so as far
-  // as Kaldi is concerned the layout is KCWH (== KCSR, in their notation).
+  // as Kaldi is concerned the layout is KWHC (== KSRC, in their notation).
+  const int filter_shape[4] = {c.num_channels_out, c.num_channels_in, c.filter_width,
+                               c.filter_height};
   CUDNN_SAFE_CALL(
-      cudnnSetFilter4dDescriptor(params_desc_, CUDNN_DATA_BASEFLOAT,
-                                 CUDNN_TENSOR_NCHW, c.num_channels_out,
-                                 c.num_channels_in, c.filter_width,
-                                 c.filter_height));
+      cudnnSetFilterNdDescriptor(params_desc_, CUDNN_DATA_BASEFLOAT,
+                                 CUDNN_TENSOR_NHWC, 4, filter_shape));
 
   int32 kaldi_width_cudnn_height, kaldi_height_cudnn_width, unused;
   CUDNN_SAFE_CALL(
@@ -232,22 +249,25 @@ void ConvolutionComputation::InitCudnn() {
   // conv_desc_, and params_desc_, so they are safe to call now.
   int out_dims[4] = {c.num_images, c.num_channels_out, c.output_image_width,
                      c.output_image_height};
-  int out_stride[4] = {c.num_channels_out * c.output_image_width * c.output_image_height,
-                       c.output_image_width * c.output_image_height,
-                       c.output_image_height, 1};
+  int out_strides[4];
+  GenerateStrides(out_dims, out_strides, 4, false);
+
   CUDNN_SAFE_CALL(
     cudnnSetTensorNdDescriptor(output_desc_, CUDNN_DATA_BASEFLOAT, 4, out_dims,
-                               out_stride));
+                               out_strides));
 
-  // Since the output tensor shape is NKHW, we need the bias to be
+  // Since the output tensor shape is NHWK, we need the bias to be
   // four-dimensional and the length of each dimension of the bias
   // equal to either one or the output tensor's corresponding
-  // length. Singleton dimensions are broadcasted.
+  // length. Singleton dimensions are broadcasted. bias_strides will
+  // permute the third element in bias_dims to correspond to the first
+  // element in the output tensor.
   int bias_dims[4] = {1, c.num_channels_out, 1, 1};
-  int bias_stride[4] = {c.num_channels_out, 1, 1, 1};
+  int bias_strides[4];
+  GenerateStrides(bias_dims, bias_strides, 4, false);
   CUDNN_SAFE_CALL(
       cudnnSetTensorNdDescriptor(bias_desc_, CUDNN_DATA_BASEFLOAT, 4,
-                                 bias_dims, bias_stride));
+                                 bias_dims, bias_strides));
 
   int32 requested_algo_count, returned_algo_count;
   CUDNN_SAFE_CALL(cudnnGetConvolutionForwardAlgorithmMaxCount(

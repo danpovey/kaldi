@@ -146,7 +146,7 @@ public:
     those familiar with CUDNN get surprised at the order
 
       @param [in] input NWHC fully-packed tensor, with NumRows() == N * W
-      @param [in] params KCWH fully-packed tensor, with NumRows() == K.
+      @param [in] params KWHC fully-packed tensor, with NumRows() == K.
       @param [in] bias vector of length K
       @param [out] output Pre-allocated NWHK fully-packed tensor, with NumRows() == N * W.
    */
@@ -156,7 +156,7 @@ public:
                        CuMatrixBase<BaseFloat> *output) const;
 
   /**
-   *  @param [in] params KCWH fully-packed tensor, with NumRows() == K
+   *  @param [in] params KWHC fully-packed tensor, with NumRows() == K
    *  @param [in] output_deriv NWHK fully-packed tensor, with NumRows() == N * W
    *  @param [out] input_deriv Pre-allocated NWHC fully-packed tensor, with
    *                           NumRows() == N * W
@@ -170,8 +170,8 @@ public:
    *  @param [in] input NWHC fully-packed tensor, with NumRows() == N * W.
    *  @param [in] alpha
    *              params_deriv := alpha * gradient_computed + params_deriv
-   *  @param [in] params KCWH fully-packed tensor, with NumRows() == K
-   *  @param [out] params_deriv Pre-allocated KCWH fully-packed tensor,
+   *  @param [in] params KWHC fully-packed tensor, with NumRows() == K
+   *  @param [out] params_deriv Pre-allocated KWHC fully-packed tensor,
    *                             with NumRows() == K.
    */
   void ConvolveBackwardParams(const CuMatrixBase<BaseFloat> &output_deriv,
@@ -180,7 +180,7 @@ public:
                               CuMatrixBase<BaseFloat> *params_deriv) const;
 
   /**
-   *  @param [in] output_deriv NWHK fully-packed tensor, with NumRows() * N * W.
+   *  @param [in] output_deriv NWHK fully-packed tensor, with NumRows() = N * W.
    *  @param [in] alpha
    *              bias_deriv := alpha * gradient_computed + bias_deriv
    *  @param [out] bias_deriv Pre-allocated vector of length K
@@ -234,15 +234,17 @@ private:
 
 
   // This function, called only if we are not using the GPU, converts
-  // the params from KCWH format to WHKC format (which is more convenient
+  // the params from KWHC format to WHKC format (which is more convenient
   // when using the CPU).  params and params_rearranged must both be
   // packed (Stride() == NumCols()), params must have num-rows equal to K
   // (num_channels_out_), and params_rearranged must have num-rows equal
   // to to WH (filter_width_ * filter_height_).
+  // TODO: Fix me to go from KCWH, rather than KWHC
   void ConvertParams(const MatrixBase<BaseFloat> &params,
                      MatrixBase<BaseFloat> *params_rearranged) const;
   // This function does the opposite transformation of what ConvertParams()
   // does.
+  // TODO: Fix me too.
   void ConvertParamsBack(const MatrixBase<BaseFloat> &params_rearranged,
                          MatrixBase<BaseFloat> *params) const;
 
