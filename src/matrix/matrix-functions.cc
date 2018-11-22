@@ -774,17 +774,27 @@ SvdRescaler::SvdRescaler(const MatrixBase<BaseFloat> &A,
                          bool symmetric):
                          input_matrix_A_(A),
                          symmetric_(symmetric) {
-      
-  int32 rows = input_matrix_A_.NumRows(), cols = input_matrix_A_.NumCols(),
-               rc_min = std::min(rows, cols);
+  KALDI_ASSERT(A.NumRows() >= A.NumCols());
+
+  int32 rows = input_matrix_A_.NumRows(),
+        cols = input_matrix_A_.NumCols(),
+        rc_min = input_matrix_A_.NumCols();
   Vector<BaseFloat> s(rc_min); // singular value vector
   Matrix<BaseFloat> U(rows, rc_min), Vt(rc_min, cols);
   input_matrix_A_.DestructiveSvd(&s, &U, &Vt);
   SortSvd(&s, &U, &Vt);
-  lambda_in_ = s;
-  *lambda_out_ = s;
-  U_ = U;
-  Vt_ = Vt;
+
+  lambda_in_.Resize(s.Dim());
+  lambda_out_.Resize(s.Dim());
+  lambda_out_deriv_.Resize(s.Dim());
+  lambda_in_.CopyFromVec(s);
+  lambda_out_.CopyFromVec(s);
+  lambda_out_deriv_.CopyFromVec(s);
+
+  U_.Resize(U.NumRows(), U.NumCols());
+  Vt_.Resize(Vt.NumRows(), Vt.NumCols());
+  U_.CopyFromMat(U);
+  Vt_.CopyFromMat(Vt);
 }
 
 void SvdRescaler::Init(const MatrixBase<BaseFloat> *A, bool symmetric) {
@@ -797,14 +807,21 @@ void SvdRescaler::Init(const MatrixBase<BaseFloat> *A, bool symmetric) {
   }
   int32 rows = input_matrix_A_.NumRows(),
         cols = input_matrix_A_.NumCols(),
-        rc_min = cols;
+        rc_min = input_matrix_A_.NumCols();
   Vector<BaseFloat> s(rc_min); // singular value vector
   Matrix<BaseFloat> U(rows, rc_min), Vt(rc_min, cols);
   input_matrix_A_.DestructiveSvd(&s, &U, &Vt);
   SortSvd(&s, &U, &Vt);
+
+  lambda_in_.Resize(s.Dim());
+  lambda_out_.Resize(s.Dim());
+  lambda_out_deriv_.Resize(s.Dim());
   lambda_in_.CopyFromVec(s);
-  lambda_out_->CopyFromVec(s);
-  lambda_out_deriv_->CopyFromVec(s);
+  lambda_out_.CopyFromVec(s);
+  lambda_out_deriv_.CopyFromVec(s);
+  
+  U_.Resize(U.NumRows(), U.NumCols());
+  Vt_.Resize(Vt.NumRows(), Vt.NumCols());
   U_.CopyFromMat(U);
   Vt_.CopyFromMat(Vt);
 }
@@ -814,20 +831,20 @@ VectorBase<BaseFloat> &SvdRescaler::InputSingularValues() {
 }
 
 VectorBase<BaseFloat> *SvdRescaler::OutputSingularValues() {
-  return lambda_out_;
+  return &lambda_out_;
 }
 
 VectorBase<BaseFloat> *SvdRescaler::OutputSingularValueDerivs() {
-  return lambda_out_deriv_;
+  return &lambda_out_deriv_;
 }
 
 void SvdRescaler::GetOutput(MatrixBase<BaseFloat> *output) {
   KALDI_ASSERT(output->NumRows() == input_matrix_A_.NumRows() &&
                output->NumCols() == input_matrix_A_.NumCols());
-  Matrix<BaseFloat> U_tmpt(U_);
-  U_tmpt.MulColsVec(*lambda_out_);
-  U_tmpt.AddMatMat(1.0, U_tmpt, kNoTrans, Vt_, kNoTrans, 0.0);
-  output->CopyFromMat(U_tmpt);
+  Matrix<BaseFloat> U_tmpt(U_), U_tmpt2(U_);
+  U_tmpt.MulColsVec(lambda_out_);
+  U_tmpt2.AddMatMat(1.0, U_tmpt, kNoTrans, Vt_, kNoTrans, 0.0);
+  output->CopyFromMat(U_tmpt2);
 }
 
 void SvdRescaler::ComputeInputDeriv(const MatrixBase<BaseFloat> &output_deriv,
@@ -840,7 +857,10 @@ void SvdRescaler::ComputeInputDeriv(const MatrixBase<BaseFloat> &output_deriv,
   input_deriv->SetZero();
 
   // \bar{D}
+  Matrix<BaseFloat> input_deriv_tmpt(input_deriv->NumRows(), input_deriv->NumCols());
   Matrix<BaseFloat> intermediate_deriv(U_.NumCols(), Vt_.NumCols());
+
+  input_deriv_tmpt.SetZero();
   intermediate_deriv.AddMatMatMat(1.0, U_, kTrans, output_deriv, kNoTrans,
                                     Vt_, kNoTrans, 0.0);
 
@@ -850,13 +870,13 @@ void SvdRescaler::ComputeInputDeriv(const MatrixBase<BaseFloat> &output_deriv,
   Vector<BaseFloat> diagonal_deriv_intermediate(U_.NumCols());
   diagonal_deriv_intermediate.SetZero();
   diagonal_deriv_intermediate.CopyDiagFromMat(intermediate_deriv);
-  diagonal_deriv_intermediate.MulElements(*lambda_out_deriv_);
+  diagonal_deriv_intermediate.MulElements(lambda_out_deriv_);
 
   // store \lambda_{i} \times d_{j}
   // as diagonal_deriv_intermediate2
   Matrix<BaseFloat> diagonal_deriv_intermediate2(U_.NumCols(), U_.NumCols());
   diagonal_deriv_intermediate2.SetZero();
-  diagonal_deriv_intermediate2.AddVecVec(1.0, lambda_in_, *lambda_out_);
+  diagonal_deriv_intermediate2.AddVecVec(1.0, lambda_in_, lambda_out_);
 
   // store \lambda_{i} \times \lambda_{i}
   // as diagonal_deriv_intermediate3
@@ -867,7 +887,7 @@ void SvdRescaler::ComputeInputDeriv(const MatrixBase<BaseFloat> &output_deriv,
   for(MatrixIndexT i = 0; i < U_.NumCols(); i++) {
     for(MatrixIndexT j = 0; j < Vt_.NumCols(); i++) {
       if ((lambda_in_(i) == 0.0) && (lambda_in_(j) == 0.0) && (i != j)) {
-        (*input_deriv)(i, j) = intermediate_deriv(i, j) * (*lambda_out_deriv_)(i);
+        (*input_deriv)(i, j) = intermediate_deriv(i, j) * (lambda_out_deriv_)(i);
       } else if (i != j) {
         if (abs((lambda_in_(i) - lambda_in_(j)) / lambda_in_(j)) > 0.0000001) {
           (*input_deriv)(i, j) = intermediate_deriv(i, j)
@@ -879,16 +899,17 @@ void SvdRescaler::ComputeInputDeriv(const MatrixBase<BaseFloat> &output_deriv,
         } else {
           float lambda_avg = (lambda_in_(i) + lambda_in_(j)) / 2.0;
           (*input_deriv)(i, j) = intermediate_deriv(i, j)
-                                 * (lambda_avg * ((*lambda_out_deriv_)(i)) + (*lambda_out_)(i))
+                                 * (lambda_avg * ((lambda_out_deriv_)(i)) + (lambda_out_)(i))
                                  / (2.0 * lambda_avg)
                                  + intermediate_deriv(j, i)
-                                 * (lambda_avg * ((*lambda_out_deriv_)(i)) - (*lambda_out_)(i))
+                                 * (lambda_avg * ((lambda_out_deriv_)(i)) - (lambda_out_)(i))
                                  / (2.0 * lambda_avg);
         }
       }
     }
   }
   input_deriv->CopyDiagFromVec(diagonal_deriv_intermediate);
-  input_deriv->AddMatMatMat(1.0, U_, kNoTrans, *input_deriv, kNoTrans, Vt_, kTrans, 0.0);
+  input_deriv_tmpt.AddMatMatMat(1.0, U_, kNoTrans, *input_deriv, kNoTrans, Vt_, kTrans, 0.0);
+  input_deriv->CopyFromMat(input_deriv_tmpt);
 }
 } // end namespace kaldi
