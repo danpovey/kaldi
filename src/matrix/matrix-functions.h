@@ -217,8 +217,8 @@ class SvdRescaler {
   // Constructor that takes no args.  In this case you are supposed to
   // call Init()
   SvdRescaler(): input_matrix_A_(), symmetric_(false),
-                U_(), Vt_(), lambda_in_(),
-                lambda_out_(), lambda_out_deriv_() {}
+                 U_(), Vt_(), lambda_in_(),
+                 lambda_out_(), lambda_out_deriv_() {}
 
   // An alternative to the constructor that takes args.  Should only be called
   // directly after initializing the object with no args.  Warning: this object

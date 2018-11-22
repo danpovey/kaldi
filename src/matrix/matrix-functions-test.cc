@@ -71,6 +71,14 @@ void SvdRescalerTestWrite() {
         KALDI_ASSERT((vec1)(i) == (vec2)(i));
         KALDI_ASSERT((vec2)(i) == (vec3)(i));
     }
+    vec2(1) = 9.0;
+    vec2(5) = 99.0;
+    vec3(1) = 9.0;
+    vec3(5) = 99.0;
+    for(int32 i = 0; i < rows; i++)
+    {
+        KALDI_ASSERT((vec2)(i) == (vec3)(i));
+    }
 
     VectorBase<BaseFloat> &vec12 = sc2.InputSingularValues();
     VectorBase<BaseFloat> &vec22 = *sc2.OutputSingularValues(),
@@ -78,6 +86,14 @@ void SvdRescalerTestWrite() {
     for(int32 i = 0; i < rows; i++)
     {
         KALDI_ASSERT((vec12)(i) == (vec22)(i));
+        KALDI_ASSERT((vec22)(i) == (vec32)(i));
+    }
+    vec22(1) = 9.0;
+    vec22(5) = 99.0;
+    vec32(1) = 9.0;
+    vec32(5) = 99.0;
+    for(int32 i = 0; i < rows; i++)
+    {
         KALDI_ASSERT((vec22)(i) == (vec32)(i));
     }
 }
