@@ -212,18 +212,20 @@ class SvdRescaler {
     instead of A = U diag(s) V^T, using SpMatrix::Eig().  You can view this as a
     special case of SVD.
   */
-  SvdRescaler(const MatrixBase<BaseFloat> &A, bool symmetric);
+  SvdRescaler(const MatrixBase<BaseFloat> &A, bool symmetric = false);
 
   // Constructor that takes no args.  In this case you are supposed to
   // call Init()
-  SvdRescaler();
+  SvdRescaler(): input_matrix_A_(), symmetric_(false),
+                 U_(), Vt_(), lambda_in_(),
+                 lambda_out_(), lambda_out_deriv_() {}
 
   // An alternative to the constructor that takes args.  Should only be called
   // directly after initializing the object with no args.  Warning: this object
   // keeps a reference to this matrix, so don't modify it during the lifetime
   // of this object.
   // This program assumes the input matrix (num_rows >= num_cols).
-  void Init(const MatrixBase<BaseFloat> *A, bool symmetric);
+  void Init(const MatrixBase<BaseFloat> *A, bool symmetric = false);
 
   // Get the singular values of A, which will have been computed in the
   // constructor.  The reason why this is not const is that there may be
@@ -264,8 +266,7 @@ class SvdRescaler {
     Matrix<BaseFloat> input_matrix_A_;
     bool symmetric_;
     Matrix<BaseFloat> U_, Vt_;
-    Vector<BaseFloat> lambda_in_;
-    Vector<BaseFloat> *lambda_out_, *lambda_out_deriv_;
+    Vector<BaseFloat> lambda_in_, lambda_out_, lambda_out_deriv_;
 };
 
 /// @} end of "addtogroup matrix_funcs_misc"
