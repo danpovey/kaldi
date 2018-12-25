@@ -211,6 +211,7 @@ class BatchNormComponent: public Component {
   virtual void Scale(BaseFloat scale);
   virtual void Add(BaseFloat alpha, const Component &other);
   virtual void ZeroStats();
+  virtual void ClippedCorrection(CuVector<double> *clipped_r, Cuvector<double> *clipped_d);
 
 
   virtual void DeleteMemo(void *memo) const { delete static_cast<Memo*>(memo); }
@@ -268,6 +269,30 @@ class BatchNormComponent: public Component {
   // to other values as a way to control how fast the following layer learns
   // (smaller -> slower).  The same config exists in NormalizeComponent.
   BaseFloat target_rms_;
+
+  // the flag whether use the batch renorm described in paper:
+  // https://arxiv.org/abs/1702.03275
+  // This adds extra variables during training. The inference is the same 
+  // for either value of this parameter.
+  bool batch_renorm_;
+
+  // the maximum allowed correction for batch renorm.
+  // The correction `(r, d)` is used as `corrected_value = normalized_value * r + d`,
+  // with `r` clipped to [rmin, rmax], and `d` to [-dmax, dmax]. Missing rmax, rmin,
+  //  dmax are set to inf, 0, inf, respectively.
+  BaseFloat r_max_;
+  BaseFloat d_max_;
+
+  // Momentum used to update the moving means and standard
+  // deviations with renorm. Unlike `momentum`, this affects training
+  // and should be neither too small (which would add noise) nor too large
+  // (which would give stale estimates). 
+  // Noted that it seems we do use runing average for the inference.
+  BaseFloat renorm_momentum_;
+
+  CuVector<double> moving_stddv_;
+
+  CuVector<double> moving_mean_;
 
   // This is true if we want the batch normalization to operate in 'test mode'
   // meaning the data mean and stddev used for the normalization are fixed
