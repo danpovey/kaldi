@@ -220,6 +220,8 @@ void BatchNormComponent::ComputeDerived() {
     count_ = 1.0;
     stats_sum_.SetRandn();
     stats_sumsq_.SetRandn();
+    moving_mean_.SetRandn();
+    moving_stddv_.SetRandn();
     stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
   }
 
@@ -247,7 +249,8 @@ void BatchNormComponent::ComputeDerived() {
   } else {
     // for batch renorm inference, we use the exponentially-decayed moving averages
     offset_.CopyFromVec(moving_mean_);
-    scale_.CopyFromVec(moving_var_.ApplyPow(-1));
+    scale_.CopyFromVec(moving_stddv_);
+    scale_.ApplyPow(-1.0);
     offset_.MulElements(scale_);
   }
 }
@@ -293,8 +296,9 @@ std::string BatchNormComponent::Info() const {
     stream << ", data-mean=" << SummarizeVector(mean)
            << ", data-stddev=" << SummarizeVector(var);
     if (batch_renorm_) {
-      stream << ", moving-mean="<< SummarizeVector(moving_mean_)
-             << ", moving-stddv="<< SummarizeVector(moving_stddv_);
+      Vector<BaseFloat> moving_mean(moving_mean_), moving_stddv(moving_stddv_);
+      stream << ", moving-mean=" << SummarizeVector(moving_mean)
+             << ", moving-stddv=" << SummarizeVector(moving_stddv);
     }
   }
   return stream.str();
@@ -311,7 +315,7 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
   cfl->GetValue("epsilon", &epsilon_);
   cfl->GetValue("target-rms", &target_rms_);
   cfl->GetValue("test-mode", &test_mode_);
-  cfl->Getvalue("batch-renorm", &batch_renorm_);
+  cfl->GetValue("batch-renorm", &batch_renorm_);
   if (!ok || dim_ <= 0) {
     KALDI_ERR << "BatchNormComponent must have 'dim' specified, and > 0";
   }
@@ -471,41 +475,42 @@ void* BatchNormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
     if (batch_renorm_) {
       // if we use batch renorm, memo will need 2 extra rows to store
       // clipped_r and clipped_d
-      memo->mean_uvar_scale.Resize(7, dim);
+      memo->mean_uvar_scale.Resize(9, dim);
       
       CuSubVector<BaseFloat> mean(memo->mean_uvar_scale, 0),
           uvar(memo->mean_uvar_scale, 1),
           scale(memo->mean_uvar_scale, 2),
-          clipped_r(memo->mean_uvar_scale, 3),
-          clipped_d(memo->mean_uvar_scale, 4);
-    } else {
-      memo->mean_uvar_scale.Resize(5, dim);
-      
-      CuSubVector<BaseFloat> mean(memo->mean_uvar_scale, 0),
-          uvar(memo->mean_uvar_scale, 1),
-          scale(memo->mean_uvar_scale, 2);
-    }
+          clipped_r(memo->mean_uvar_scale, 5),
+          clipped_d(memo->mean_uvar_scale, 6),
+          moving_mean(memo->mean_uvar_scale, 7),
+          moving_stddv(memo->mean_uvar_scale, 8);
+      mean.AddRowSumMat(1.0 / num_frames, in, 0.0);
+      uvar.AddDiagMat2(1.0 / num_frames, in, kTrans, 0.0);    
+      scale.CopyFromVec(uvar);
 
-    mean.AddRowSumMat(1.0 / num_frames, in, 0.0);
-    uvar.AddDiagMat2(1.0 / num_frames, in, kTrans, 0.0);    
-    scale.CopyFromVec(uvar);
+      // by applying this scale at this point, we save a multiply later on.
+      BaseFloat var_scale = 1.0 / (target_rms_ * target_rms_);
+      scale.AddVecVec(-var_scale, mean, mean, var_scale);
+      // at this point, 'scale' contains just the variance (times target-rms^{-2}).
+      scale.ApplyFloor(0.0);
+      scale.Add(var_scale * epsilon_);
+      // Now 'scale' contains the variance floored to zero and then with epsilon
+      // added [both times 1/target-rms^2].
+      scale.ApplyPow(-0.5);
+      // now 'scale' is the actual scale we'll use.
 
-    // by applying this scale at this point, we save a multiply later on.
-    BaseFloat var_scale = 1.0 / (target_rms_ * target_rms_);
-    scale.AddVecVec(-var_scale, mean, mean, var_scale);
-    // at this point, 'scale' contains just the variance (times target-rms^{-2}).
-    scale.ApplyFloor(0.0);
-    scale.Add(var_scale * epsilon_);
-    // Now 'scale' contains the variance floored to zero and then with epsilon
-    // added [both times 1/target-rms^2].
-    scale.ApplyPow(-0.5);
-    // now 'scale' is the actual scale we'll use.
-
-    // the next command will do no work if out == in, for in-place propagation.
-    if (batch_renorm_) {
       // update moving averages
-      moving_mean_.AddVec(renorm_momentum_, mean, (1.0 - renorm_momentum_));
-      moving_stddv_.AddVec(renorm_momentum_, scale.ApplyPow(-1), (1.0 - renorm_momentum_));
+      moving_mean.CopyFromVec(moving_mean_); 
+      moving_stddv.CopyFromVec(moving_stddv_);
+      BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
+
+      moving_mean.Scale(renorm_momentum_2);
+      moving_mean.AddVec(renorm_momentum_, mean);
+
+      moving_stddv.CopyFromVec(scale);
+      moving_stddv.ApplyPow(-1.0);
+      moving_stddv.Scale(renorm_momentum_2);
+      moving_stddv.AddVec(renorm_momentum_, stddv);
 
       // calculate the clipped correction
       ClippedCorrection(&clipped_r, &clipped_d);
@@ -518,14 +523,33 @@ void* BatchNormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
       // update the nomalized data using clipped correction
       out->MulColsVec(clipped_r);
       out->AddVecToRows(1.0, clipped_d, 1.0);
-
+      return static_cast<void*>(memo);
     } else {
+      memo->mean_uvar_scale.Resize(5, dim);
+      
+      CuSubVector<BaseFloat> mean(memo->mean_uvar_scale, 0),
+          uvar(memo->mean_uvar_scale, 1),
+          scale(memo->mean_uvar_scale, 2);
+      mean.AddRowSumMat(1.0 / num_frames, in, 0.0);
+      uvar.AddDiagMat2(1.0 / num_frames, in, kTrans, 0.0);    
+      scale.CopyFromVec(uvar);
+
+      // by applying this scale at this point, we save a multiply later on.
+      BaseFloat var_scale = 1.0 / (target_rms_ * target_rms_);
+      scale.AddVecVec(-var_scale, mean, mean, var_scale);
+      // at this point, 'scale' contains just the variance (times target-rms^{-2}).
+      scale.ApplyFloor(0.0);
+      scale.Add(var_scale * epsilon_);
+      // Now 'scale' contains the variance floored to zero and then with epsilon
+      // added [both times 1/target-rms^2].
+      scale.ApplyPow(-0.5);
+      // now 'scale' is the actual scale we'll use.
       // If not batch_renorm_, we will use the conventional batchnorm
       out->CopyFromMat(in);
       out->AddVecToRows(-1.0, mean, 1.0);
       out->MulColsVec(scale);
+      return static_cast<void*>(memo);
     }
-    return static_cast<void*>(memo);
   } else {
     if (offset_.Dim() != block_dim_) {
       if (count_ == 0)
@@ -582,19 +606,10 @@ void BatchNormComponent::Backprop(
     KALDI_ASSERT(memo != NULL && "memo not passed into backprop");
     int32 num_frames = memo->num_frames;
     KALDI_ASSERT(out_value.NumRows() == num_frames);
-    if (batch_renorm_) {
-      CuSubVector<BaseFloat>
-        scale(memo->mean_uvar_scale, 2),
-        clipped_r(memo->mean_uvar_scale, 3),
-        clipped_d(memo->mean_uvar_scale, 4),
-        var_deriv_mod(memo->mean_uvar_scale, 5),
-        temp(memo->mean_uvar_scale, 6);
-    } else {
-      CuSubVector<BaseFloat>
-        scale(memo->mean_uvar_scale, 2),
-        var_deriv_mod(memo->mean_uvar_scale, 3),
-        temp(memo->mean_uvar_scale, 4);
-    }
+    CuSubVector<BaseFloat>
+      scale(memo->mean_uvar_scale, 2),
+      var_deriv_mod(memo->mean_uvar_scale, 3),
+      temp(memo->mean_uvar_scale, 4);
 
     // var_deriv_mod is going to contain:
     //  2 * power * target-rms^{1/power} * (1/I \sum_i z'(i) z(i)) * scale^{-(1+power)/power}
@@ -625,6 +640,7 @@ void BatchNormComponent::Backprop(
     // x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i))  + z(i) var_deriv_mod
 
     if (batch_renorm_) {
+      CuSubVector<BaseFloat> clipped_r(memo->mean_uvar_scale, 5);
       in_deriv->MulColsVec(clipped_r);
     // At this point, the correction of batch renorm is taken into consideration
     }
@@ -669,11 +685,19 @@ void BatchNormComponent::StoreStats(
   if (stats_sum_.Dim() != block_dim_) {
     stats_sum_.Resize(block_dim_);
     stats_sumsq_.Resize(block_dim_);
+    moving_mean_.Resize(block_dim_);
+    moving_stddv_.Resize(block_dim_);
     KALDI_ASSERT(count_ == 0);
   }
   count_ += num_frames;
   stats_sum_.AddVec(num_frames, mean, 1.0);
   stats_sumsq_.AddVec(num_frames, uvar, 1.0);
+  if (batch_renorm_) {
+    CuSubVector<BaseFloat> moving_mean(memo->mean_uvar_scale, 7),
+                           moving_stddv(memo->mean_uvar_scale, 8);
+    moving_mean_.CopyFromVec(moving_mean);
+    moving_stddv_.CopyFromVec(moving_stddv_);
+  }
 }
 
 void BatchNormComponent::Read(std::istream &is, bool binary) {
@@ -708,7 +732,7 @@ void BatchNormComponent::Read(std::istream &is, bool binary) {
     ExpectToken(is, binary, "<MovingMean>");
     ReadBasicType(is, binary, &moving_mean_);
     ExpectToken(is, binary, "<MovingStddv>");
-    ReadBasicType(is, binary, &moving_var_);
+    ReadBasicType(is, binary, &moving_stddv_);
   }
   ExpectToken(is, binary, "</BatchNormComponent>");
   ComputeDerived();
@@ -752,7 +776,7 @@ void BatchNormComponent::Write(std::ostream &os, bool binary) const {
     WriteToken(is, binary, "<MovingMean>");
     WriteBasicType(is, binary, &moving_mean_);
     WriteToken(is, binary, "<MovingStddv>");
-    WriteBasicType(is, binary, &moving_var_);
+    WriteBasicType(is, binary, &moving_stddv_);
   }
   WriteToken(os, binary, "</BatchNormComponent>");
 }
@@ -762,10 +786,14 @@ void BatchNormComponent::Scale(BaseFloat scale) {
     count_ = 0.0;
     stats_sum_.SetZero();
     stats_sumsq_.SetZero();
+    moving_mean_.SetZero();
+    moving_stddv_.SetZero();
   } else {
     count_ *= scale;
     stats_sum_.Scale(scale);
     stats_sumsq_.Scale(scale);
+    moving_mean_.Scale(scale);
+    moving_stddv_.Scale(scale);
   }
 }
 
