@@ -211,8 +211,6 @@ class BatchNormComponent: public Component {
   virtual void Scale(BaseFloat scale);
   virtual void Add(BaseFloat alpha, const Component &other);
   virtual void ZeroStats();
-  virtual void ClippedCorrection(CuVector<double> *clipped_r, CuVector<double> *clipped_d);
-
 
   virtual void DeleteMemo(void *memo) const { delete static_cast<Memo*>(memo); }
 

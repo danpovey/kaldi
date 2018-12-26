@@ -167,7 +167,9 @@ std::string NnetInfo(const Nnet &nnet);
 /// dropout_proportion value.
 void SetDropoutProportion(BaseFloat dropout_proportion, Nnet *nnet);
 
+void SetRMaxForBatchRenorm(BaseFloat r_max, Nnet *nnet);
 
+void SetDMaxForBatchRenorm(BaseFloat d_max, Nnet *nnet);
 /// Returns true if nnet has at least one component of type BatchNormComponent.
 bool HasBatchnorm(const Nnet &nnet);
 
