@@ -211,6 +211,10 @@ void BatchNormComponent::ComputeDerived() {
     scale_.Resize(0);
     return;
   }
+  bool count_eq_zero = false;
+
+  offset_.Resize(block_dim_);
+  scale_.Resize(block_dim_);
 
   if (count_ == 0.0) {
     KALDI_WARN << "Test-mode is set but there is no data count.  "
@@ -220,14 +224,15 @@ void BatchNormComponent::ComputeDerived() {
     count_ = 1.0;
     stats_sum_.SetRandn();
     stats_sumsq_.SetRandn();
-    moving_mean_.SetRandn();
-    moving_stddv_.SetRandn();
     stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
+    count_eq_zero = true;
+    // because the moving_mean_ and moving_stddv_ will not be set to zero
+    // every iter begin, so we do not set it random here
+    // moving_mean_.SetRandn();
+    // moving_stddv_.SetRandn();
   }
 
-  offset_.Resize(block_dim_);
-  scale_.Resize(block_dim_);
-  if (!batch_renorm_) {
+  if (!batch_renorm_ || count_eq_zero) {
     offset_.CopyFromVec(stats_sum_);
     offset_.Scale(-1.0 / count_);
     // now offset_ is -mean.
@@ -283,7 +288,7 @@ std::string BatchNormComponent::Info() const {
   stream << Type() << ", dim=" << dim_ << ", block-dim=" << block_dim_
          << ", epsilon=" << epsilon_ << ", target-rms=" << target_rms_
          << ", count=" << count_
-         << ", batch-renorm=" << batch_renorm_
+         << ", batch-renorm=" << (batch_renorm_ ? "true" : "false")
          << ", test-mode=" << (test_mode_ ? "true" : "false");
   if (count_ > 0) {
     Vector<BaseFloat> mean(stats_sum_), var(stats_sumsq_);
@@ -340,9 +345,7 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
   stats_sum_.Resize(block_dim_);
   stats_sumsq_.Resize(block_dim_);
   moving_stddv_.Resize(block_dim_);
-  moving_stddv_.SetZero();
   moving_mean_.Resize(block_dim_);
-  moving_mean_.SetZero();
   if (test_mode_) {
     ComputeDerived();
   }
