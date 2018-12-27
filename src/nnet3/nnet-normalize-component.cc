@@ -315,6 +315,10 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
   epsilon_ = 1.0e-03;
   target_rms_ = 1.0;
   test_mode_ = false;
+  batch_renorm_ = false;
+  r_max_ = 1.0;
+  d_max_ = 0.0;
+  renorm_momentum_ = 0.1;
   bool ok = cfl->GetValue("dim", &dim_);
   cfl->GetValue("block-dim", &block_dim_);
   cfl->GetValue("epsilon", &epsilon_);
@@ -325,10 +329,6 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
     cfl->GetValue("r-max", &r_max_);
     cfl->GetValue("d-max", &d_max_);
     cfl->GetValue("renorm-momentum", &renorm_momentum_);
-  } else {
-    r_max_ = 1.0;
-    d_max_ = 0.0;
-    renorm_momentum_ = 1.0;
   }
   if (!ok || dim_ <= 0) {
     KALDI_ERR << "BatchNormComponent must have 'dim' specified, and > 0";
