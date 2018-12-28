@@ -274,12 +274,15 @@ class BatchNormComponent: public Component {
   // for either value of this parameter.
   bool batch_renorm_;
 
+  bool training_begining_;
+
   // the maximum allowed correction for batch renorm.
   // The correction `(r, d)` is used as `corrected_value = normalized_value * r + d`,
   // with `r` clipped to [rmin, rmax], and `d` to [-dmax, dmax]. Missing rmax, rmin,
   //  dmax are set to inf, 0, inf, respectively.
   BaseFloat r_max_;
   BaseFloat d_max_;
+  BaseFloat batch_renorm_average_count_;
 
   // Momentum used to update the moving means and standard
   // deviations with renorm. Unlike `momentum`, this affects training

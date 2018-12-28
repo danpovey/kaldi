@@ -222,6 +222,7 @@ void BatchNormComponent::ComputeDerived() {
         "in unit-tests (or compute_prob_*.0.log).  If you see this "
         "elsewhere, something is very wrong.";
     count_ = 1.0;
+    batch_renorm_average_count_ = 1.0;
     stats_sum_.SetRandn();
     stats_sumsq_.SetRandn();
     stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
@@ -253,10 +254,12 @@ void BatchNormComponent::ComputeDerived() {
     // now offset_ is -(scale*mean).
   } else {
     // for batch renorm inference, we use the exponentially-decayed moving averages
+    // update the moving averages by dividing the parallel jobs number
     offset_.CopyFromVec(moving_mean_);
     scale_.CopyFromVec(moving_stddv_);
     scale_.ApplyPow(-1.0);
     offset_.MulElements(scale_);
+    offset_.Scale(-1.0);
   }
 }
 
@@ -275,7 +278,8 @@ BatchNormComponent::BatchNormComponent(const BatchNormComponent &other):
     epsilon_(other.epsilon_), target_rms_(other.target_rms_),
     test_mode_(other.test_mode_), count_(other.count_),
     stats_sum_(other.stats_sum_), stats_sumsq_(other.stats_sumsq_),
-    batch_renorm_(other.batch_renorm_), r_max_(other.r_max_), d_max_(other.d_max_),
+    batch_renorm_(other.batch_renorm_), training_begining_(other.training_begining_), 
+    r_max_(other.r_max_), d_max_(other.d_max_), batch_renorm_average_count_(other.batch_renorm_average_count_),
     renorm_momentum_(other.renorm_momentum_), moving_mean_(other.moving_mean_),
     moving_stddv_(other.moving_stddv_) {
   ComputeDerived();
@@ -316,6 +320,7 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
   target_rms_ = 1.0;
   test_mode_ = false;
   batch_renorm_ = false;
+  training_begining_ = true;
   r_max_ = 1.0;
   d_max_ = 0.0;
   renorm_momentum_ = 0.1;
@@ -342,6 +347,7 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
     KALDI_ERR << "Could not process these elements in initializer: "
               << cfl->UnusedValues();
   count_ = 0;
+  batch_renorm_average_count_ = 1;
   stats_sum_.Resize(block_dim_);
   stats_sumsq_.Resize(block_dim_);
   moving_stddv_.Resize(block_dim_);
@@ -534,26 +540,29 @@ void* BatchNormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
       out->CopyFromMat(in);
       out->AddVecToRows(-1.0, mean, 1.0);
       out->MulColsVec(scale);
+      
+      if (!training_begining_) {
+        // update clipped update
+        CuVector<BaseFloat> moving_mean(moving_mean_), moving_stddv(moving_stddv_);
+        clipped_d.CopyFromVec(mean);
+        clipped_d.AddVec(-1.0, moving_mean);
+        moving_stddv.ApplyPow(-1.0);
+        clipped_d.MulElements(moving_stddv);
 
-      // update clipped update
-      CuVector<BaseFloat> moving_mean(moving_mean_), moving_stddv(moving_stddv_);
-      clipped_d.CopyFromVec(mean);
-      clipped_d.AddVec(-1.0, moving_mean);
-      clipped_d.DivElements(moving_stddv);
+        CuVector<BaseFloat> stddv_tmpt(scale);
+        stddv_tmpt.ApplyPow(-1.0);
+        clipped_r.CopyFromVec(stddv_tmpt);
+        clipped_r.MulElements(moving_stddv);
 
-      CuVector<BaseFloat> stddv_tmpt(scale);
-      stddv_tmpt.ApplyPow(-1.0);
-      clipped_r.CopyFromVec(stddv_tmpt);
-      clipped_r.DivElements(moving_stddv);
+        clipped_r.ApplyCeiling(r_max_);
+        clipped_r.ApplyFloor(1.0 / r_max_);
+        clipped_d.ApplyCeiling(d_max_);
+        clipped_d.ApplyFloor(- d_max_);
 
-      clipped_r.ApplyCeiling(r_max_);
-      clipped_r.ApplyFloor(1.0 / r_max_);
-      clipped_d.ApplyCeiling(d_max_);
-      clipped_d.ApplyFloor(- d_max_);
-
-      // update the output
-      out->MulColsVec(clipped_r);
-      out->AddVecToRows(1.0, clipped_d, 1.0);
+        // update the output
+        out->MulColsVec(clipped_r);
+        out->AddVecToRows(1.0, clipped_d, 1.0);
+      }
     }
     return static_cast<void*>(memo);
   } else {
@@ -645,10 +654,12 @@ void BatchNormComponent::Backprop(
     // starting BATCHNORM_MATH as:
     // x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i))  + z(i) var_deriv_mod
 
-    if (batch_renorm_) {
-      CuSubVector<BaseFloat> clipped_r(memo->mean_uvar_scale, 5);
-      in_deriv->MulColsVec(clipped_r);
-    // At this point, the correction of batch renorm is taken into consideration
+    if (!training_begining_) {
+      if (batch_renorm_) {
+        CuSubVector<BaseFloat> clipped_r(memo->mean_uvar_scale, 5);
+        in_deriv->MulColsVec(clipped_r);
+      // At this point, the correction of batch renorm is taken into consideration
+      } 
     }
   } else {
     KALDI_ASSERT(offset_.Dim() == block_dim_);
@@ -700,15 +711,23 @@ void BatchNormComponent::StoreStats(
   stats_sumsq_.AddVec(num_frames, uvar, 1.0);
   // update moving averages
   if (batch_renorm_) {
-    BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
+    if (training_begining_) {
+      training_begining_ = false;
+      moving_mean_.CopyFromVec(mean);
+      CuSubVector<BaseFloat> scale(memo->mean_uvar_scale, 2);
+      scale.ApplyPow(-1.0);
+      moving_stddv_.CopyFromVec(scale);
+    } else {
+      BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
 
-    moving_mean_.Scale(renorm_momentum_2);
-    moving_mean_.AddVec(renorm_momentum_, mean);
+      moving_mean_.Scale(renorm_momentum_2);
+      moving_mean_.AddVec(renorm_momentum_, mean);
 
-    CuSubVector<BaseFloat> scale(memo->mean_uvar_scale, 2);
-    scale.ApplyPow(-1.0);
-    moving_stddv_.Scale(renorm_momentum_2);
-    moving_stddv_.AddVec(renorm_momentum_, scale);
+      CuSubVector<BaseFloat> scale(memo->mean_uvar_scale, 2);
+      scale.ApplyPow(-1.0);
+      moving_stddv_.Scale(renorm_momentum_2);
+      moving_stddv_.AddVec(renorm_momentum_, scale);
+    }
   }
 }
 
@@ -735,6 +754,8 @@ void BatchNormComponent::Read(std::istream &is, bool binary) {
   ExpectToken(is, binary, "<BatchRenorm>");
   ReadBasicType(is, binary, &batch_renorm_);
   if (batch_renorm_) {
+    ExpectToken(is, binary, "<TrainingBegin>");
+    ReadBasicType(is, binary, &training_begining_);
     ExpectToken(is, binary, "<RMaxCorrection>");
     ReadBasicType(is, binary, &r_max_);
     ExpectToken(is, binary, "<DMaxCorrection>");
@@ -745,6 +766,8 @@ void BatchNormComponent::Read(std::istream &is, bool binary) {
     moving_mean_.Read(is, binary);
     ExpectToken(is, binary, "<MovingStddv>");
     moving_stddv_.Read(is, binary);
+    ExpectToken(is, binary, "<BatchRenormAverageCount>");
+    ReadBasicType(is, binary, &batch_renorm_average_count_);
   }
   ExpectToken(is, binary, "</BatchNormComponent>");
   ComputeDerived();
@@ -779,6 +802,8 @@ void BatchNormComponent::Write(std::ostream &os, bool binary) const {
   WriteToken(os, binary, "<BatchRenorm>");
   WriteBasicType(os, binary, batch_renorm_);
   if (batch_renorm_) {
+    WriteToken(os, binary, "<TrainingBegin>");
+    WriteBasicType(os, binary, training_begining_);
     WriteToken(os, binary, "<RMaxCorrection>");
     WriteBasicType(os, binary, r_max_);
     WriteToken(os, binary, "<DMaxCorrection>");
@@ -789,6 +814,8 @@ void BatchNormComponent::Write(std::ostream &os, bool binary) const {
     moving_mean_.Write(os, binary);
     WriteToken(os, binary, "<MovingStddv>");
     moving_stddv_.Write(os, binary);
+    WriteToken(os, binary, "<BatchRenormAverageCount>");
+    WriteBasicType(os, binary, batch_renorm_average_count_);
   }
   WriteToken(os, binary, "</BatchNormComponent>");
 }
@@ -798,10 +825,9 @@ void BatchNormComponent::Scale(BaseFloat scale) {
     count_ = 0.0;
     stats_sum_.SetZero();
     stats_sumsq_.SetZero();
-    moving_mean_.SetZero();
-    moving_stddv_.SetZero();
   } else {
     count_ *= scale;
+    batch_renorm_average_count_ *= scale;
     stats_sum_.Scale(scale);
     stats_sumsq_.Scale(scale);
     moving_mean_.Scale(scale);
@@ -816,6 +842,11 @@ void BatchNormComponent::Add(BaseFloat alpha, const Component &other_in) {
   count_ += alpha * other->count_;
   stats_sum_.AddVec(alpha, other->stats_sum_);
   stats_sumsq_.AddVec(alpha, other->stats_sumsq_);
+  if (batch_renorm_) {
+    batch_renorm_average_count_ += alpha * other->batch_renorm_average_count_;
+    moving_mean_.AddVec(alpha, other->moving_mean_);
+    moving_stddv_.AddVec(alpha, other->moving_stddv_);
+  }
   // this operation might change offset_ and scale_, so we recompute them
   // in this instance (but not in Scale()).
   ComputeDerived();
@@ -828,6 +859,7 @@ void BatchNormComponent::ZeroStats() {
   // parameters (offset_ and scale_).
   if (!test_mode_) {
     count_ = 0.0;
+    batch_renorm_average_count_ = 1.0;
     stats_sum_.SetZero();
     stats_sumsq_.SetZero();
   }
