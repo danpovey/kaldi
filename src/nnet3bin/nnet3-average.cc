@@ -159,6 +159,8 @@ int main(int argc, char *argv[]) {
       KALDI_ERR << "Error detected in a model-reading thread.";
     }
 
+    ScaleBatchRenormStatsForModelAverage(nnets[0]);
+
     WriteKaldiObject(nnets[0], nnet_wxfilename, binary_write);
 
     KALDI_LOG << "Averaged parameters of " << num_inputs

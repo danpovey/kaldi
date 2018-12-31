@@ -717,6 +717,10 @@ void BatchNormComponent::StoreStats(
       CuSubVector<BaseFloat> scale(memo->mean_uvar_scale, 2);
       scale.ApplyPow(-1.0);
       moving_stddv_.CopyFromVec(scale);
+      // used for debug
+      CuVector<BaseFloat> mv_mean(moving_mean_), mv_stddv(moving_stddv_);
+      KALDI_WARN << "Moving mean : "<< SummarizeVector(mv_mean);
+      KALDI_WARN << "Moving stddv : "<< SummarizeVector(mv_stddv);
     } else {
       BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
 
@@ -727,6 +731,10 @@ void BatchNormComponent::StoreStats(
       scale.ApplyPow(-1.0);
       moving_stddv_.Scale(renorm_momentum_2);
       moving_stddv_.AddVec(renorm_momentum_, scale);
+      // used for debug
+      CuVector<BaseFloat> mv_mean(moving_mean_), mv_stddv(moving_stddv_);
+      KALDI_WARN << "Moving mean : "<< SummarizeVector(mv_mean);
+      KALDI_WARN << "Moving stddv : "<< SummarizeVector(mv_stddv);
     }
   }
 }
@@ -865,6 +873,13 @@ void BatchNormComponent::ZeroStats() {
   }
 }
 
+void BatchNormComponent::ScaleBatchRenormForModelAverage() {
+  if (batch_renorm_) {
+    moving_mean_.Scale(1.0 / batch_renorm_average_count_);
+    moving_stddv_.Scale(1.0 / batch_renorm_average_count_);
+    ComputeDerived();
+  }
+}
 
 } // namespace nnet3
 } // namespace kaldi

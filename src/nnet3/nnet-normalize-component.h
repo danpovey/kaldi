@@ -217,6 +217,8 @@ class BatchNormComponent: public Component {
   virtual void StoreStats(const CuMatrixBase<BaseFloat> &in_value,
                           const CuMatrixBase<BaseFloat> &out_value,
                           void *memo);
+  
+  virtual void ScaleBatchRenormForModelAverage();
 
   // Members specific to this component type.
   // Note: the offset and scale will only be nonempty in 'test mode'.

@@ -537,6 +537,15 @@ void ScaleBatchnormStats(BaseFloat batchnorm_stats_scale,
   }
 }
 
+void ScaleBatchRenormStatsForModelAverage(Nnet *nnet) {
+  for (int32 c = 0; c < nnet->NumComponents(); c++) {
+    Component *comp = nnet->GetComponent(c);
+    BatchNormComponent *bc = dynamic_cast<BatchNormComponent*>(comp);
+    if (bc != NULL)
+      bc->ScaleBatchRenormForModelAverage();
+  }
+}
+
 
 void RecomputeStats(const std::vector<NnetExample> &egs, Nnet *nnet) {
   KALDI_LOG << "Recomputing stats on nnet (affects batch-norm)";
