@@ -270,7 +270,7 @@ void BatchNormComponent::SetTestMode(bool test_mode) {
 
 void BatchNormComponent::Check() const {
   KALDI_ASSERT(dim_ > 0 && block_dim_ > 0 && dim_ % block_dim_ == 0 &&
-               epsilon_ > 0.0 && target_rms_ > 0.0);
+               epsilon_ > 0.0 && target_rms_ > 0.0 && r_max_ > 0 && d_max_ >= 0);
 }
 
 BatchNormComponent::BatchNormComponent(const BatchNormComponent &other):
@@ -562,6 +562,7 @@ void* BatchNormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
         // update the output
         out->MulColsVec(clipped_r);
         out->AddVecToRows(1.0, clipped_d, 1.0);
+        
       }
     }
     return static_cast<void*>(memo);
@@ -657,7 +658,7 @@ void BatchNormComponent::Backprop(
     if (!training_begining_) {
       if (batch_renorm_) {
         CuSubVector<BaseFloat> clipped_r(memo->mean_uvar_scale, 5);
-        in_deriv->MulColsVec(clipped_r);
+        CuMatrix<BaseFloat> in_deriv_backup(in_deriv);
       // At this point, the correction of batch renorm is taken into consideration
       } 
     }
@@ -718,9 +719,9 @@ void BatchNormComponent::StoreStats(
       scale.ApplyPow(-1.0);
       moving_stddv_.CopyFromVec(scale);
       // used for debug
-      CuVector<BaseFloat> mv_mean(moving_mean_), mv_stddv(moving_stddv_);
-      KALDI_WARN << "Moving mean : "<< SummarizeVector(mv_mean);
-      KALDI_WARN << "Moving stddv : "<< SummarizeVector(mv_stddv);
+      //CuVector<BaseFloat> mv_mean(moving_mean_), mv_stddv(moving_stddv_);
+      //KALDI_WARN << "Moving mean : "<< SummarizeVector(mv_mean);
+      //KALDI_WARN << "Moving stddv : "<< SummarizeVector(mv_stddv);
     } else {
       BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
 
@@ -732,9 +733,9 @@ void BatchNormComponent::StoreStats(
       moving_stddv_.Scale(renorm_momentum_2);
       moving_stddv_.AddVec(renorm_momentum_, scale);
       // used for debug
-      CuVector<BaseFloat> mv_mean(moving_mean_), mv_stddv(moving_stddv_);
-      KALDI_WARN << "Moving mean : "<< SummarizeVector(mv_mean);
-      KALDI_WARN << "Moving stddv : "<< SummarizeVector(mv_stddv);
+      //CuVector<BaseFloat> mv_mean(moving_mean_), mv_stddv(moving_stddv_);
+      //KALDI_WARN << "Moving mean : "<< SummarizeVector(mv_mean);
+      //KALDI_WARN << "Moving stddv : "<< SummarizeVector(mv_stddv);
     }
   }
 }
@@ -838,8 +839,6 @@ void BatchNormComponent::Scale(BaseFloat scale) {
     batch_renorm_average_count_ *= scale;
     stats_sum_.Scale(scale);
     stats_sumsq_.Scale(scale);
-    moving_mean_.Scale(scale);
-    moving_stddv_.Scale(scale);
   }
 }
 
@@ -850,11 +849,11 @@ void BatchNormComponent::Add(BaseFloat alpha, const Component &other_in) {
   count_ += alpha * other->count_;
   stats_sum_.AddVec(alpha, other->stats_sum_);
   stats_sumsq_.AddVec(alpha, other->stats_sumsq_);
-  if (batch_renorm_) {
-    batch_renorm_average_count_ += alpha * other->batch_renorm_average_count_;
-    moving_mean_.AddVec(alpha, other->moving_mean_);
-    moving_stddv_.AddVec(alpha, other->moving_stddv_);
-  }
+  //if (batch_renorm_) {
+    //batch_renorm_average_count_ += alpha * other->batch_renorm_average_count_;
+    //moving_mean_.AddVec(alpha, other->moving_mean_);
+    //moving_stddv_.AddVec(alpha, other->moving_stddv_);
+  //}
   // this operation might change offset_ and scale_, so we recompute them
   // in this instance (but not in Scale()).
   ComputeDerived();
@@ -875,9 +874,10 @@ void BatchNormComponent::ZeroStats() {
 
 void BatchNormComponent::ScaleBatchRenormForModelAverage() {
   if (batch_renorm_) {
-    moving_mean_.Scale(1.0 / batch_renorm_average_count_);
-    moving_stddv_.Scale(1.0 / batch_renorm_average_count_);
-    ComputeDerived();
+    // moving_mean_.Scale(1.0 / batch_renorm_average_count_);
+    // moving_stddv_.Scale(1.0 / batch_renorm_average_count_);
+    // ComputeDerived();
+    return;
   }
 }
 
