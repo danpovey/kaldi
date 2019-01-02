@@ -218,7 +218,9 @@ class BatchNormComponent: public Component {
                           const CuMatrixBase<BaseFloat> &out_value,
                           void *memo);
   
-  virtual void ScaleBatchRenormForModelAverage();
+  virtual bool IsBatchRenorm();
+
+  virtual void SetBatchRenormCorrections(BaseFloat r_max, BaseFloat d_max);
 
   // Members specific to this component type.
   // Note: the offset and scale will only be nonempty in 'test mode'.
@@ -284,7 +286,6 @@ class BatchNormComponent: public Component {
   //  dmax are set to inf, 0, inf, respectively.
   BaseFloat r_max_;
   BaseFloat d_max_;
-  BaseFloat batch_renorm_average_count_;
 
   // Momentum used to update the moving means and standard
   // deviations with renorm. 

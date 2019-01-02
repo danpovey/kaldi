@@ -222,7 +222,6 @@ void BatchNormComponent::ComputeDerived() {
         "in unit-tests (or compute_prob_*.0.log).  If you see this "
         "elsewhere, something is very wrong.";
     count_ = 1.0;
-    batch_renorm_average_count_ = 1.0;
     stats_sum_.SetRandn();
     stats_sumsq_.SetRandn();
     stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
@@ -773,8 +772,6 @@ void BatchNormComponent::Read(std::istream &is, bool binary) {
     moving_mean_.Read(is, binary);
     ExpectToken(is, binary, "<MovingStddv>");
     moving_stddv_.Read(is, binary);
-    ExpectToken(is, binary, "<BatchRenormAverageCount>");
-    ReadBasicType(is, binary, &batch_renorm_average_count_);
   }
   ExpectToken(is, binary, "</BatchNormComponent>");
   ComputeDerived();
@@ -821,8 +818,6 @@ void BatchNormComponent::Write(std::ostream &os, bool binary) const {
     moving_mean_.Write(os, binary);
     WriteToken(os, binary, "<MovingStddv>");
     moving_stddv_.Write(os, binary);
-    WriteToken(os, binary, "<BatchRenormAverageCount>");
-    WriteBasicType(os, binary, batch_renorm_average_count_);
   }
   WriteToken(os, binary, "</BatchNormComponent>");
 }
@@ -834,7 +829,6 @@ void BatchNormComponent::Scale(BaseFloat scale) {
     stats_sumsq_.SetZero();
   } else {
     count_ *= scale;
-    batch_renorm_average_count_ *= scale;
     stats_sum_.Scale(scale);
     stats_sumsq_.Scale(scale);
   }
