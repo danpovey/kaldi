@@ -675,6 +675,478 @@ void BatchNormComponent::ZeroStats() {
   }
 }
 
+void BatchRenormComponent::ComputeDerived() {
+  if (!test_mode_) {
+    offset_.Resize(0);
+    scale_.Resize(0);
+    return;
+  }
+
+  if (count_ == 0.0) {
+    KALDI_WARN << "Test-mode is set but there is no data count.  "
+        "Creating random counts.  This only makes sense "
+        "in unit-tests (or compute_prob_*.0.log).  If you see this "
+        "elsewhere, something is very wrong.";
+    count_ = 1.0;
+    stats_sum_.SetRandn();
+    stats_sumsq_.SetRandn();
+    stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
+  }
+  offset_.CopyFromVec(moving_mean_);
+  scale_.CopyFromVec(moving_stddev_);
+  scale_.ApplyPow(-1.0);
+  offset_.MulElements(scale_);
+  offset_.Scale(-1.0);
+}
+
+void BatchRenormComponent::SetTestMode(bool test_mode) {
+  test_mode_ = test_mode;
+  ComputeDerived();
+}
+
+void BatchRenormComponent::Check() const {
+  KALDI_ASSERT(dim_ > 0 && block_dim_ > 0 && dim_ % block_dim_ == 0 &&
+               epsilon_ > 0.0 && target_rms_ > 0.0 && r_max_ > 0 && d_max_ >= 0 && alpha_ >= 0.0);
+}
+
+BatchRenormComponent::BatchRenormComponent(const BatchRenormComponent &other):
+    dim_(other.dim_), block_dim_(other.block_dim_),
+    epsilon_(other.epsilon_), target_rms_(other.target_rms_),
+    test_mode_(other.test_mode_), count_(other.count_),
+    stats_sum_(other.stats_sum_), stats_sumsq_(other.stats_sumsq_),
+    batch_renorm_(other.batch_renorm_), training_begining_(other.training_begining_), 
+    r_max_(other.r_max_), d_max_(other.d_max_),
+    alpha_(other.alpha_), moving_mean_(other.moving_mean_),
+    moving_stddev_(other.moving_stddev_) {
+  ComputeDerived();
+  Check();
+}
+
+
+std::string BatchRenormComponent::Info() const {
+  std::ostringstream stream;
+  stream << Type() << ", dim=" << dim_ << ", block-dim=" << block_dim_
+         << ", epsilon=" << epsilon_ << ", target-rms=" << target_rms_
+         << ", count=" << count_
+         << ", test-mode=" << (test_mode_ ? "true" : "false");
+  if (count_ > 0) {
+    Vector<BaseFloat> mean(stats_sum_), var(stats_sumsq_);
+    mean.Scale(1.0 / count_);
+    var.Scale(1.0 / count_);
+    // subtract mean^2 from var.
+    var.AddVecVec(-1.0, mean, mean, 1.0);
+    var.ApplyFloor(0.0);
+    var.ApplyPow(0.5);  // make it the stddev.
+    stream << ", data-mean=" << SummarizeVector(mean)
+           << ", data-stddev=" << SummarizeVector(var);
+    Vector<BaseFloat> moving_mean_copy(moving_mean_), moving_stddev_copy(moving_stddev_);
+    stream << ", moving-mean=" << SummarizeVector(moving_mean_copy)
+           << ", moving-stddv=" << SummarizeVector(moving_stddev_copy);
+  }
+  return stream.str();
+}
+
+void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
+  dim_ = -1;
+  block_dim_ = -1;
+  epsilon_ = 1.0e-03;
+  target_rms_ = 1.0;
+  test_mode_ = false;
+  training_begining_ = true;
+  r_max_ = 1.0;
+  d_max_ = 0.0;
+  alpha_ = 0.01;
+  
+  bool ok = cfl->GetValue("dim", &dim_);
+  cfl->GetValue("block-dim", &block_dim_);
+  cfl->GetValue("epsilon", &epsilon_);
+  cfl->GetValue("target-rms", &target_rms_);
+  cfl->GetValue("test-mode", &test_mode_);
+  cfl->GetValue("r-max", &r_max_);
+  cfl->GetValue("d-max", &d_max_);
+  cfl->GetValue("alpha", &alpha_);
+  if (!ok || dim_ <= 0) {
+    KALDI_ERR << "BatchRenormComponent must have 'dim' specified, and > 0";
+  }
+  if (block_dim_ == -1)
+    block_dim_ = dim_;
+  if (!(block_dim_ > 0 && dim_ % block_dim_ == 0 &&
+        epsilon_ > 0 && target_rms_ > 0))
+    KALDI_ERR << "Invalid configuration in BatchRenormComponent.";
+  if (cfl->HasUnusedValues())
+    KALDI_ERR << "Could not process these elements in initializer: "
+              << cfl->UnusedValues();
+  count_ = 0;
+  stats_sum_.Resize(block_dim_);
+  stats_sumsq_.Resize(block_dim_);
+  moving_stddev_.Resize(block_dim_);
+  moving_mean_.Resize(block_dim_);
+  if (test_mode_) {
+    ComputeDerived();
+  }
+}
+
+
+
+/*
+  BATCH-RENORM_MATH
+
+  */
+void* BatchRenormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
+                                    const CuMatrixBase<BaseFloat> &in,
+                                    CuMatrixBase<BaseFloat> *out) const {
+  KALDI_ASSERT(SameDim(in, *out) &&
+               (in.NumCols() == dim_ || in.NumCols() == block_dim_));
+  if (in.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(in.Stride() == in.NumCols() && out->Stride() == out->NumCols());
+    int32 ratio = dim_ / block_dim_, orig_rows = in.NumRows(),
+        orig_cols = in.NumCols(), new_rows = orig_rows * ratio,
+        new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> in_reshaped(in.Data(), new_rows, new_cols, new_cols),
+        out_reshaped(out->Data(), new_rows, new_cols, new_cols);
+    return Propagate(indexes, in_reshaped, &out_reshaped);
+  }
+
+  // From this point, we can assume that the num-cols of 'in' and 'out'
+  // equals block_dim_.
+
+  if (!test_mode_) {
+    // search in the comment above for FORWARD PASS to see what is being
+    // implemented here.
+    // if this takes too much time due to multiple different CUDA calls,
+    // we'll consider making a single kernel for some of it.
+    Memo *memo = new Memo;
+    int32 num_frames = in.NumRows(), dim = block_dim_;
+    memo->num_frames = num_frames;
+    memo->mean_uvar_scale.Resize(7, dim);
+    CuSubVector<BaseFloat> mean(memo->mean_uvar_scale, 0),
+        uvar(memo->mean_uvar_scale, 1),
+        scale(memo->mean_uvar_scale, 2),
+        clipped_r(memo->mean_uvar_scale, 5),
+        clipped_d(memo->mean_uvar_scale, 6);
+
+    mean.AddRowSumMat(1.0 / num_frames, in, 0.0);
+    uvar.AddDiagMat2(1.0 / num_frames, in, kTrans, 0.0);
+    scale.CopyFromVec(uvar);
+
+    // by applying this scale at this point, we save a multiply later on.
+    BaseFloat var_scale = 1.0 / (target_rms_ * target_rms_);
+    scale.AddVecVec(-var_scale, mean, mean, var_scale);
+    // at this point, 'scale' contains just the variance (times target-rms^{-2}).
+    scale.ApplyFloor(0.0);
+    scale.Add(var_scale * epsilon_);
+    // Now 'scale' contains the variance floored to zero and then with epsilon
+    // added [both times 1/target-rms^2].
+    scale.ApplyPow(-0.5);
+    // now 'scale' is the actual scale we'll use.
+
+    // the next command will do no work if out == in, for in-place propagation.
+    out->CopyFromMat(in);
+    out->AddVecToRows(-1.0, mean, 1.0);
+    out->MulColsVec(scale);
+
+    if (!training_begining_) {
+      // update clipped update
+      CuVector<BaseFloat> moving_mean_copy(moving_mean_), moving_stddev_copy(moving_stddev_);
+      clipped_d.CopyFromVec(mean);
+      clipped_d.AddVec(-1.0, moving_mean_copy);
+      moving_stddev_copy.ApplyPow(-1.0);
+      clipped_d.MulElements(moving_stddev_copy);
+
+      CuVector<BaseFloat> stddv_tmpt(scale);
+      stddv_tmpt.ApplyPow(-1.0);
+      clipped_r.CopyFromVec(stddv_tmpt);
+      clipped_r.MulElements(moving_stddev_copy);
+
+      clipped_r.ApplyCeiling(r_max_);
+      clipped_r.ApplyFloor(1.0 / r_max_);
+      clipped_d.ApplyCeiling(d_max_);
+      clipped_d.ApplyFloor(- d_max_);
+
+      out->MulColsVec(clipped_r);
+      out->AddVecToRows(1.0, clipped_d, 1.0);
+    } else {
+      clipped_r.Set(1);
+      clipped_d.Set(0);  
+    }
+    return static_cast<void*>(memo);
+  } else {
+    if (offset_.Dim() != block_dim_) {
+      if (count_ == 0)
+        KALDI_ERR << "Test mode set in BatchRenormComponent, but no stats.";
+      else  // why was ComputeDerived() not called?
+        KALDI_ERR << "Code error in BatchRenormComponent";
+    }
+    out->CopyFromMat(in);
+    out->MulColsVec(scale_);
+    out->AddVecToRows(1.0, offset_, 1.0);
+    return NULL;
+  }
+}
+
+void BatchRenormComponent::Backprop(
+    const std::string &debug_info,
+    const ComponentPrecomputedIndexes *indexes,
+    const CuMatrixBase<BaseFloat> &in_value,  // unused
+    const CuMatrixBase<BaseFloat> &out_value,
+    const CuMatrixBase<BaseFloat> &out_deriv,
+    void *memo_in,
+    Component *to_update,  // unused
+    CuMatrixBase<BaseFloat> *in_deriv) const {
+
+  KALDI_ASSERT(SameDim(out_value, out_deriv) &&
+               SameDim(out_value, *in_deriv) &&
+               (out_value.NumCols() == dim_ ||
+                out_value.NumCols() == block_dim_));
+  if (out_value.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(out_value.Stride() == out_value.NumCols() &&
+                 out_deriv.Stride() == out_deriv.NumCols() &&
+                 in_deriv->Stride() == in_deriv->NumCols());
+    int32 ratio = dim_ / block_dim_,
+        orig_rows = out_value.NumRows(),
+        orig_cols = out_value.NumCols(),
+        new_rows = orig_rows * ratio, new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> out_value_reshaped(out_value.Data(), new_rows,
+                                              new_cols, new_cols),
+        out_deriv_reshaped(out_deriv.Data(), new_rows, new_cols, new_cols),
+        in_deriv_reshaped(in_deriv->Data(), new_rows, new_cols, new_cols);
+    // we'll never use in_value, so pass it in unchanged.
+    Backprop(debug_info, indexes, in_value,
+             out_value_reshaped, out_deriv_reshaped,
+             memo_in, to_update, &in_deriv_reshaped);
+    return;
+  }
+
+  Memo *memo = static_cast<Memo*>(memo_in);
+
+  if (!test_mode_) {
+    // search above for BACKWARD PASS for a comment describing the math.
+    KALDI_ASSERT(memo != NULL && "memo not passed into backprop");
+    int32 num_frames = memo->num_frames;
+    KALDI_ASSERT(out_value.NumRows() == num_frames);
+    CuSubVector<BaseFloat>
+        scale(memo->mean_uvar_scale, 2),
+        var_deriv_mod(memo->mean_uvar_scale, 3),
+        temp(memo->mean_uvar_scale, 4),
+        clipped_r(memo->mean_uvar_scale, 5);
+
+    // var_deriv_mod is going to contain:
+    //  2 * power * target-rms^{1/power} * (1/I \sum_i z'(i) z(i)) * scale^{-(1+power)/power}
+    // which for power = -0.5 simplifies to:
+    // -1.0 / (target_rms * target_rms).
+    // but for now we don't have the power of 'scale', we'll add that later.
+    BaseFloat coeff = -1.0 / (target_rms_ * target_rms_ * num_frames);
+
+    var_deriv_mod.AddDiagMatMat(coeff, out_value, kTrans,
+                                out_deriv, kNoTrans, 0.0);
+    var_deriv_mod.MulElements(scale);
+
+    temp.AddRowSumMat(-1.0 / num_frames, out_deriv, 0.0);
+    // the following statement does no work if in_deriv and out_deriv are the
+    // same matrix.
+    in_deriv->CopyFromMat(out_deriv);
+    in_deriv->AddVecToRows(1.0, temp);
+    // At this point, *in_deriv contains
+    // (z'(i) - 1/I * \sum_i z'(i))
+    in_deriv->MulColsVec(scale);
+    // At this point, *in_deriv contains
+    // scale * (z'(i) - 1/I * \sum_i z'(i))
+
+    in_deriv->AddMatDiagVec(1.0, out_value, kNoTrans,
+                            var_deriv_mod, 1.0);
+
+    // At this point, *in_deriv contains what we described in the comment
+    // starting BATCHNORM_MATH as:
+    // x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i))  + z(i) var_deriv_mod
+  } else {
+    KALDI_ASSERT(offset_.Dim() == block_dim_);
+    // the next call does no work if they point to the same memory.
+    in_deriv->CopyFromMat(out_deriv);
+    in_deriv->MulColsVec(scale_);
+  }
+}
+
+void BatchRenormComponent::StoreStats(
+    const CuMatrixBase<BaseFloat> &in_value,
+    const CuMatrixBase<BaseFloat> &out_value,
+    void *memo_in) {
+  // in test mode this component does not store stats, it doesn't provide the
+  // kStoresStats flag.
+  KALDI_ASSERT(!test_mode_);
+  KALDI_ASSERT(out_value.NumCols() == dim_ || out_value.NumCols() == block_dim_);
+  if (out_value.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(out_value.Stride() == out_value.NumCols());
+    int32 ratio = dim_ / block_dim_,
+        orig_rows = out_value.NumRows(),
+        orig_cols = out_value.NumCols(),
+        new_rows = orig_rows * ratio, new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> out_value_reshaped(out_value.Data(), new_rows,
+                                              new_cols, new_cols);
+    // we'll never use in_value, so just pass it in unchanged.
+    StoreStats(in_value, out_value_reshaped, memo_in);
+    return;
+  }
+
+  Memo *memo = static_cast<Memo*>(memo_in);
+  KALDI_ASSERT(out_value.NumRows() == memo->num_frames);
+
+  CuSubVector<BaseFloat> mean(memo->mean_uvar_scale, 0),
+      uvar(memo->mean_uvar_scale, 1),
+      scale(memo->mean_uvar_scale, 2);
+  KALDI_ASSERT(mean.Dim() == block_dim_ && memo->num_frames > 0);
+  BaseFloat num_frames = memo->num_frames;
+  if (stats_sum_.Dim() != block_dim_) {
+    stats_sum_.Resize(block_dim_);
+    stats_sumsq_.Resize(block_dim_);
+    moving_mean_.Resize(block_dim_);
+    moving_stddev_.Resize(block_dim_);
+    KALDI_ASSERT(count_ == 0);
+  }
+  count_ += num_frames;
+  stats_sum_.AddVec(num_frames, mean, 1.0);
+  stats_sumsq_.AddVec(num_frames, uvar, 1.0);
+  if (training_begining_) {
+    training_begining_ = false;
+    moving_mean_.CopyFromVec(mean);
+    scale.ApplyPow(-1.0);
+    moving_stddev_.CopyFromVec(scale);
+    scale.ApplyPow(-1.0);
+  } else {
+    BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
+
+    moving_mean_.Scale(renorm_momentum_2);
+    moving_mean_.AddVec(renorm_momentum_, mean);
+
+    scale.ApplyPow(-1.0);
+    moving_stddev_.Scale(renorm_momentum_2);
+    moving_stddev_.AddVec(renorm_momentum_, scale);
+    scale.ApplyPow(-1.0);
+  }
+}
+
+void BatchRenormComponent::Read(std::istream &is, bool binary) {
+  ExpectOneOrTwoTokens(is, binary, "<BatchRenormComponent>", "<Dim>");
+  ReadBasicType(is, binary, &dim_);
+  ExpectToken(is, binary, "<BlockDim>");
+  ReadBasicType(is, binary, &block_dim_);
+  ExpectToken(is, binary, "<Epsilon>");
+  ReadBasicType(is, binary, &epsilon_);
+  ExpectToken(is, binary, "<TargetRms>");
+  ReadBasicType(is, binary, &target_rms_);
+  ExpectToken(is, binary, "<TestMode>");
+  ReadBasicType(is, binary, &test_mode_);
+  ExpectToken(is, binary, "<Count>");
+  ReadBasicType(is, binary, &count_);
+  ExpectToken(is, binary, "<StatsMean>");
+  stats_sum_.Read(is, binary);
+  ExpectToken(is, binary, "<StatsVar>");
+  stats_sumsq_.Read(is, binary);
+  stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
+  stats_sum_.Scale(count_);
+  stats_sumsq_.Scale(count_);
+  ExpectToken(is, binary, "<TrainingBegin>");
+  ReadBasicType(is, binary, &training_begining_);
+  ExpectToken(is, binary, "<RMaxCorrection>");
+  ReadBasicType(is, binary, &r_max_);
+  ExpectToken(is, binary, "<DMaxCorrection>");
+  ReadBasicType(is,  binary, &d_max_);
+  ExpectToken(is, binary, "<RenormMomentum>");
+  ReadBasicType(is, binary, &renorm_momentum_);
+  ExpectToken(is, binary, "<MovingMean>");
+  moving_mean_.Read(is, binary);
+  ExpectToken(is, binary, "<MovingStddev>");
+  moving_stddev_.Read(is, binary);
+  ExpectToken(is, binary, "</BatchRenormComponent>");
+  ComputeDerived();
+  Check();
+}
+
+void BatchRenormComponent::Write(std::ostream &os, bool binary) const {
+  Check();
+  WriteToken(os, binary, "<BatchRenormComponent>");
+  WriteToken(os, binary, "<Dim>");
+  WriteBasicType(os, binary, dim_);
+  WriteToken(os, binary, "<BlockDim>");
+  WriteBasicType(os, binary, block_dim_);
+  WriteToken(os, binary, "<Epsilon>");
+  WriteBasicType(os, binary, epsilon_);
+  WriteToken(os, binary, "<TargetRms>");
+  WriteBasicType(os, binary, target_rms_);
+  WriteToken(os, binary, "<TestMode>");
+  WriteBasicType(os, binary, test_mode_);
+  WriteToken(os, binary, "<Count>");
+  WriteBasicType(os, binary,  count_);
+  CuVector<BaseFloat> mean(stats_sum_), var(stats_sumsq_);
+  if (count_ != 0) {
+    mean.Scale(1.0 / count_);
+    var.Scale(1.0 / count_);
+    var.AddVecVec(-1.0, mean, mean, 1.0);
+  }
+  WriteToken(os, binary, "<StatsMean>");
+  mean.Write(os, binary);
+  WriteToken(os, binary, "<StatsVar>");
+  var.Write(os, binary);
+  WriteToken(os, binary, "<TrainingBegin>");
+  WriteBasicType(os, binary, training_begining_);
+  WriteToken(os, binary, "<RMaxCorrection>");
+  WriteBasicType(os, binary, r_max_);
+  WriteToken(os, binary, "<DMaxCorrection>");
+  WriteBasicType(os,  binary, d_max_);
+  WriteToken(os, binary, "<RenormMomentum>");
+  WriteBasicType(os, binary, renorm_momentum_);
+  WriteToken(os, binary, "<MovingMean>");
+  moving_mean_.Write(os, binary);
+  WriteToken(os, binary, "<MovingStddev>");
+  moving_stddev_.Write(os, binary);
+  WriteToken(os, binary, "</BatchRenormComponent>");
+}
+
+void BatchRenormComponent::Scale(BaseFloat scale) {
+  if (scale == 0) {
+    count_ = 0.0;
+    stats_sum_.SetZero();
+    stats_sumsq_.SetZero();
+  } else {
+    count_ *= scale;
+    stats_sum_.Scale(scale);
+    stats_sumsq_.Scale(scale);
+  }
+}
+
+
+void BatchRenormComponent::Add(BaseFloat alpha, const Component &other_in) {
+  const BatchRenormComponent *other =
+      dynamic_cast<const BatchRenormComponent*>(&other_in);
+  count_ += alpha * other->count_;
+  stats_sum_.AddVec(alpha, other->stats_sum_);
+  stats_sumsq_.AddVec(alpha, other->stats_sumsq_);
+  // this operation might change offset_ and scale_, so we recompute them
+  // in this instance (but not in Scale()).
+  ComputeDerived();
+}
+
+void BatchRenormComponent::ZeroStats() {
+  // We only zero the stats if we're not in test mode.  In test mode, this would
+  // be dangerous as the stats are the source for the transform, and zeroing
+  // them and then calling ComputeDerived() again would remove the transform
+  // parameters (offset_ and scale_).
+  if (!test_mode_) {
+    count_ = 0.0;
+    stats_sum_.SetZero();
+    stats_sumsq_.SetZero();
+  }
+}
+
+void BatchNormComponent::SetBatchRenormCorrections(BaseFloat r_max, BaseFloat d_max) {
+   r_max_ = r_max;
+   d_max_ = d_max;
+ }
 
 } // namespace nnet3
 } // namespace kaldi
