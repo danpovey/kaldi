@@ -864,5 +864,14 @@ void BatchNormComponent::ZeroStats() {
   }
 }
 
+bool BatchNormComponent::IsBatchRenorm() {
+  return batch_renorm_;
+}
+
+void BatchNormComponent::SetBatchRenormCorrections(BaseFloat r_max, BaseFloat d_max) {
+  r_max_ = r_max;
+  d_max_ = d_max;
+}
+
 } // namespace nnet3
 } // namespace kaldi
