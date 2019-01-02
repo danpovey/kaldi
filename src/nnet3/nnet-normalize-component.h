@@ -287,10 +287,7 @@ class BatchNormComponent: public Component {
   BaseFloat batch_renorm_average_count_;
 
   // Momentum used to update the moving means and standard
-  // deviations with renorm. Unlike `momentum`, this affects training
-  // and should be neither too small (which would add noise) nor too large
-  // (which would give stale estimates). 
-  // Noted that it seems we do use runing average for the inference.
+  // deviations with renorm. 
   BaseFloat renorm_momentum_;
 
   CuVector<double> moving_stddv_;

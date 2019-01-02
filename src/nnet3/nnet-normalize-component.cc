@@ -267,7 +267,7 @@ void BatchNormComponent::SetTestMode(bool test_mode) {
 
 void BatchNormComponent::Check() const {
   KALDI_ASSERT(dim_ > 0 && block_dim_ > 0 && dim_ % block_dim_ == 0 &&
-               epsilon_ > 0.0 && target_rms_ > 0.0);
+               epsilon_ > 0.0 && target_rms_ > 0.0 && r_max_ > 0 && d_max_ >= 0);
 }
 
 BatchNormComponent::BatchNormComponent(const BatchNormComponent &other):
