@@ -282,8 +282,7 @@ class BatchNormComponent: public Component {
 
   // the maximum allowed correction for batch renorm.
   // The correction `(r, d)` is used as `corrected_value = normalized_value * r + d`,
-  // with `r` clipped to [rmin, rmax], and `d` to [-dmax, dmax]. Missing rmax, rmin,
-  //  dmax are set to inf, 0, inf, respectively.
+  // with `r` clipped to [1 / rmax, rmax], and `d` to [-dmax, dmax]. 
   BaseFloat r_max_;
   BaseFloat d_max_;
 
