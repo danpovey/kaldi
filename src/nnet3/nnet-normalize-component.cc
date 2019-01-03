@@ -3,6 +3,7 @@
 // Copyright      2015-2017  Johns Hopkins University (author: Daniel Povey)
 //                2015  Guoguo Chen
 //                2015  Daniel Galvez
+//                2018  Gaofeng Cheng (Institute of Acoustics, Chinese Academy of Sciences)
 
 // See ../../COPYING for clarification regarding multiple authors
 //
@@ -694,6 +695,8 @@ void BatchRenormComponent::ComputeDerived() {
     stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
     compute_prob_zero_iter = true;
   }
+  offset_.Resize(block_dim_);
+  scale_.Resize(block_dim_);
   if (compute_prob_zero_iter) {
     offset_.CopyFromVec(stats_sum_);
     offset_.Scale(-1.0 / count_);
@@ -738,7 +741,7 @@ BatchRenormComponent::BatchRenormComponent(const BatchRenormComponent &other):
     epsilon_(other.epsilon_), target_rms_(other.target_rms_),
     test_mode_(other.test_mode_), count_(other.count_),
     stats_sum_(other.stats_sum_), stats_sumsq_(other.stats_sumsq_),
-    batch_renorm_(other.batch_renorm_), training_begining_(other.training_begining_), 
+    training_begining_(other.training_begining_), 
     r_max_(other.r_max_), d_max_(other.d_max_),
     alpha_(other.alpha_), moving_mean_(other.moving_mean_),
     moving_stddev_(other.moving_stddev_) {
@@ -835,8 +838,8 @@ void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
   of the actual computations slightly more efficient.
   It should be noted that we use target-rms = 1.0 for batch-renorm
 
-  clipped_r and clipped_d is the allowed correction terms of batch-renorm, which is
-  treated as constant for a given training setup.
+  clipped_r and clipped_d are the allowed correction terms of batch-renorm, which is
+  treated as constant for a given training setup. Back-prop is stopped through them.
 
   Define:   mean = 1/I * sum_i x(i)
             y(i) = x(i) - mean
@@ -884,9 +887,9 @@ void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
           [\sum_i z(i) = I * clipped_d]
           =  rscale * \sum_i z'(i)
  and:
-    x'(i) =  z'(i) * rscale   +    z(i) var_deriv_mod   -  1/I mean'
-          =  z'(i) * rscale   +    z(i) var_deriv_mod   -  1/I * rscale * \sum_i z'(i)
-          =  rscale * (z'(i) - 1/I * \sum_i z'(i)) +  z(i) var_deriv_mod
+    x'(i) =  z'(i) * rscale   +    (z(i) - clipped_d) * var_deriv_mod   -  1/I mean'
+          =  z'(i) * rscale   +    (z(i) - clipped_d) * var_deriv_mod   -  1/I * rscale * \sum_i z'(i)
+          =  rscale * (z'(i) - 1/I * \sum_i z'(i)) +  (z(i) - clipped_d) var_deriv_mod
 
     It will simplify the code if we define:
     For batch-renorm, target-rms = 1.0, so scale == rscale.  This way, we can write as follows:
@@ -897,7 +900,7 @@ void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
                 .. which for power = -0.5, simplifies to:
    var_deriv_mod = -1.0 * (clipped_r)^(-2) * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale
 
-           x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i)) + z(i) var_deriv_mod
+           x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i)) + (z(i) - clipped_d) var_deriv_mod
 */
 void* BatchRenormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
                                     const CuMatrixBase<BaseFloat> &in,
@@ -1042,13 +1045,17 @@ void BatchRenormComponent::Backprop(
         clipped_r(memo->mean_uvar_scale, 5),
         clipped_d(memo->mean_uvar_scale, 6);
 
+    // rscale == clipped_r * (var + epsilon)^power == clipped_r * scale_ !! this scale_ is from memo
+    // and target-rms = 1.0, so scale = rscale
+    scale.MulElements(clipped_r);
+
     // var_deriv_mod is going to contain:
     //  -1.0 * (clipped_r)^(-2) * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale
     // but for now we don't have the power of 'scale', we'll add that later.
     BaseFloat coeff = -1.0 / num_frames;
     // z(i) - clipped_d
     CuMatrix<BaseFloat> out_value_minus_clipped_d(out_value);
-    out_value_minus_clipped_d->AddVecToRows(-1.0, clipped_d, 1.0);    
+    out_value_minus_clipped_d.AddVecToRows(-1.0, clipped_d, 1.0);    
 
     // -1.0 * (1/I \sum_i (z(i) - clipped_d) * z'(i))
     var_deriv_mod.AddDiagMatMat(coeff, out_value_minus_clipped_d, kTrans,
@@ -1071,12 +1078,15 @@ void BatchRenormComponent::Backprop(
     // At this point, *in_deriv contains
     // scale * (z'(i) - 1/I * \sum_i z'(i))
 
-    in_deriv->AddMatDiagVec(1.0, out_value, kNoTrans,
+    in_deriv->AddMatDiagVec(1.0, out_value_minus_clipped_d, kNoTrans,
                             var_deriv_mod, 1.0);
 
     // At this point, *in_deriv contains what we described in the comment
     // starting BATCHNORM_MATH as:
-    // x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i))  + z(i) var_deriv_mod
+    // x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i)) + (z(i) - clipped_d) var_deriv_mod
+
+    // to scale the memo scale back to its original value
+    scale.DivElements(clipped_r);
   } else {
     KALDI_ASSERT(offset_.Dim() == block_dim_);
     // the next call does no work if they point to the same memory.

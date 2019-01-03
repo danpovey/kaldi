@@ -518,7 +518,8 @@ void SetDropoutProportion(BaseFloat dropout_proportion,
 bool HasBatchnorm(const Nnet &nnet) {
   for (int32 c = 0; c < nnet.NumComponents(); c++) {
     const Component *comp = nnet.GetComponent(c);
-    if (dynamic_cast<const BatchNormComponent*>(comp) != NULL)
+    if ((dynamic_cast<const BatchNormComponent*>(comp) != NULL) || 
+        (dynamic_cast<const BatchRenormComponent*>(comp) != NULL))
       return true;
   }
   return false;
@@ -532,8 +533,14 @@ void ScaleBatchnormStats(BaseFloat batchnorm_stats_scale,
   for (int32 c = 0; c < nnet->NumComponents(); c++) {
     Component *comp = nnet->GetComponent(c);
     BatchNormComponent *bc = dynamic_cast<BatchNormComponent*>(comp);
-    if (bc != NULL)
+    if (bc != NULL) {
       bc->Scale(batchnorm_stats_scale);
+    } else {
+      BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
+      if (bc != NULL) {
+        bc->Scale(batchnorm_stats_scale);
+      }
+    }
   }
 }
 
@@ -556,8 +563,14 @@ void SetBatchnormTestMode(bool test_mode,  Nnet *nnet) {
   for (int32 c = 0; c < nnet->NumComponents(); c++) {
     Component *comp = nnet->GetComponent(c);
     BatchNormComponent *bc = dynamic_cast<BatchNormComponent*>(comp);
-    if (bc != NULL)
+    if (bc != NULL) {
       bc->SetTestMode(test_mode);
+    } else {
+      BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
+      if (bc != NULL) {
+        bc->SetTestMode(test_mode);
+      }
+    }
   }
 }
 
@@ -1641,8 +1654,14 @@ class ModelCollapser {
     const BatchNormComponent *batchnorm_component =
         dynamic_cast<const BatchNormComponent*>(
             nnet_->GetComponent(component_index1));
-    if (batchnorm_component == NULL)
-      return -1;
+    if (batchnorm_component == NULL) {
+      const BatchRenormComponent *batchnorm_component =
+        dynamic_cast<const BatchRenormComponent*>(
+            nnet_->GetComponent(component_index1));
+            if (batchnorm_component == NULL) {
+              return -1;
+            }
+    }
 
     if (batchnorm_component->Offset().Dim() == 0) {
       KALDI_ERR << "Expected batch-norm components to have test-mode set.";

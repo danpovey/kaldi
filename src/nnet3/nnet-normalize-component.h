@@ -7,6 +7,7 @@
 //           2014-2015  Guoguo Chen
 //                2015  Daniel Galvez
 //                2015  Tom Ko
+//                2018  Gaofeng Cheng (Institute of Acoustics, Chinese Academy of Sciences)
 
 // See ../../COPYING for clarification regarding multiple authors
 //
