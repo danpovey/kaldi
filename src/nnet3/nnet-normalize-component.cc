@@ -341,7 +341,7 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
             y(i) = x(i) - mean
 
             var = 1/I \sum_i y(i)^2
-         rscale = sqrt(var + epsilon)^power   <---- For regular batchnorm, power == -0.5.
+         rscale = (var + epsilon)^power   <---- For regular batchnorm, power == -0.5.
            z(i) = target-rms * rscale * y(i)
 
 
@@ -378,7 +378,7 @@ void BatchNormComponent::InitFromConfig(ConfigLine *cfl) {
     mean' = \sum_i y'(i)
           = (target-rms * rscale * \sum_i z'(i))  +  (var_deriv_mod \sum_i z(i))
      [... and the 2nd term above is zero when summed over i, because \sum_i z(i) is zero, ...]
-          = target-rms * rscale * \sum_i z(i)
+          = target-rms * rscale * \sum_i z'(i)
  and:
     x'(i) =  z'(i) * target-rms * rscale   +    z(i) var_deriv_mod   -  1/I mean'
           =  z'(i) * target-rms * rscale   +    z(i) var_deriv_mod   -  1/I * target-rms * rscale * \sum_i z'(i)
@@ -681,6 +681,7 @@ void BatchRenormComponent::ComputeDerived() {
     scale_.Resize(0);
     return;
   }
+  bool compute_prob_zero_iter = false;
 
   if (count_ == 0.0) {
     KALDI_WARN << "Test-mode is set but there is no data count.  "
@@ -691,12 +692,34 @@ void BatchRenormComponent::ComputeDerived() {
     stats_sum_.SetRandn();
     stats_sumsq_.SetRandn();
     stats_sumsq_.AddVecVec(1.0, stats_sum_, stats_sum_, 1.0);
+    compute_prob_zero_iter = true;
   }
-  offset_.CopyFromVec(moving_mean_);
-  scale_.CopyFromVec(moving_stddev_);
-  scale_.ApplyPow(-1.0);
-  offset_.MulElements(scale_);
-  offset_.Scale(-1.0);
+  if (compute_prob_zero_iter) {
+    offset_.CopyFromVec(stats_sum_);
+    offset_.Scale(-1.0 / count_);
+    // now offset_ is -mean.
+    scale_.CopyFromVec(stats_sumsq_);
+    scale_.Scale(1.0 / count_);
+    scale_.AddVecVec(-1.0, offset_, offset_, 1.0);
+    // now scale_ is variance.
+    // Mathematically the ApplyFloor statement should be a no-op; this is in case
+    // of numerical roundoff.
+    scale_.ApplyFloor(0.0);
+    scale_.Add(epsilon_);
+    BaseFloat power = -0.5;
+    scale_.ApplyPow(power);
+    // now scale_ = min(variance, epsilon)^power
+    // next, multiply by the target RMS (normally 1.0).
+    scale_.Scale(target_rms_);
+    offset_.MulElements(scale_);
+    // now offset_ is -(scale*mean).
+  } else {
+    offset_.CopyFromVec(moving_mean_);
+    scale_.CopyFromVec(moving_stddev_);
+    scale_.ApplyPow(-1.0);
+    offset_.MulElements(scale_);
+    offset_.Scale(-1.0);
+  }
 }
 
 void BatchRenormComponent::SetTestMode(bool test_mode) {
@@ -704,9 +727,10 @@ void BatchRenormComponent::SetTestMode(bool test_mode) {
   ComputeDerived();
 }
 
+// for batch-renorm, target-rms should be 1.0
 void BatchRenormComponent::Check() const {
   KALDI_ASSERT(dim_ > 0 && block_dim_ > 0 && dim_ % block_dim_ == 0 &&
-               epsilon_ > 0.0 && target_rms_ > 0.0 && r_max_ > 0 && d_max_ >= 0 && alpha_ >= 0.0);
+               epsilon_ > 0.0 && target_rms_ == 1.0 && r_max_ > 0 && d_max_ >= 0 && alpha_ >= 0.0);
 }
 
 BatchRenormComponent::BatchRenormComponent(const BatchRenormComponent &other):
@@ -791,7 +815,90 @@ void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
 /*
   BATCH-RENORM_MATH
 
-  */
+  This comment describes the equations involved in batch-renorm normalization, and
+  derives the forward and back-propagation.
+
+  For BatchRenorm we just set target-rms = 1.0.
+
+  This is all dimension-by-dimension, so we just imagine the inputs
+  are scalars x(i), for i=0 .. n-1.
+
+  FORWARD PASS:
+
+  Let 'power' be a constant, equal to -0.5 for regular batch-renorm.
+
+  To simplify the math we (conceptually, not physically) do the normalization in
+  two stages: first mean, then variance, so we have x(i) -> y(i) -> z(i).
+
+  The name 'rscale' means 'raw scale', meaning the scale before including
+  target-rms.  Later we'll define 'scale = target-rms * rscale', to make some
+  of the actual computations slightly more efficient.
+  It should be noted that we use target-rms = 1.0 for batch-renorm
+
+  clipped_r and clipped_d is the allowed correction terms of batch-renorm, which is
+  treated as constant for a given training setup.
+
+  Define:   mean = 1/I * sum_i x(i)
+            y(i) = x(i) - mean
+
+            var = 1/I \sum_i y(i)^2
+         rscale = clipped_r * (var + epsilon)^power   <---- For regular batch-renorm, power == -0.5.
+           z(i) = rscale * y(i) + clipped_d 
+
+
+  Most of the rest of this comment derives how to compute the derivatives.  If
+  you just want the formulas, please skip to the string 'BACKWARD PASS' below.
+
+  We'll use a notation where an apostrophe on something means (the derivative of
+  the objective function w.r.t. that thing), so y'(i) is df/dy(i), and so on.
+  We are given y'(i).  Propagating the derivatives backward:
+
+    rscale' = (sum_i y(i) z'(i))
+            = (sum_i (z(i) - clipped_d) * z'(i) ) / rscale
+
+  [ note: d(rscale)/d(var) = clipped_r * power * (var + epsilon)^{power - 1}
+                           = clipped_r^(1/power) * power * rscale^{(power-1)/power}  ]
+
+    var' = rscale' * clipped_r^(1/power) * power * rscale^{(power-1)/power}
+         = (sum_i (z(i) - clipped_d) * z'(i) ) / rscale * clipped_r^(1/power) * power * rscale^{(power-1)/power}
+         = (sum_i (z(i) - clipped_d) * z'(i) ) * clipped_r^(1/power) * power * rscale^(-1 / power)
+         = clipped_r^(1/power) * (power * (sum_i (z(i) - clipped_d) * z'(i)) * rscale^(-1 / power)
+
+  [note: the following formula is of the form "direct term" + "indirect term"]
+    y'(i) =  z'(i) * rscale   +    2/I y(i) var'
+
+  Now, the above is inconvenient because it contains y(i) which is an intermediate
+  quantity.  We reformulate in terms of z(i), using y(i) = (z(i) - clipped_d) / rscale, so:
+
+  defining
+   var_deriv_mod = 2/I * var' / rscale
+                 = clipped_r^(1/power) * 2/I * power * (sum_i (z(i) - clipped_d) * z'(i)) * rscale^{-(1+power)/power}
+ we have:
+    y'(i) =  z'(i) * rscale   +    2/I y(i) var'
+          =  z'(i) * rscale   +    2/I (z(i) - clipped_d) / rscale * var'
+          =  z'(i) * rscale   +    (z(i) - clipped_d) var_deriv_mod
+
+ Now,
+    mean' = \sum_i y'(i)
+          = rscale * \sum_i z'(i)  +  var_deriv_mod * \sum_i (z(i) - clipped_d)
+          [\sum_i z(i) = I * clipped_d]
+          =  rscale * \sum_i z'(i)
+ and:
+    x'(i) =  z'(i) * rscale   +    z(i) var_deriv_mod   -  1/I mean'
+          =  z'(i) * rscale   +    z(i) var_deriv_mod   -  1/I * rscale * \sum_i z'(i)
+          =  rscale * (z'(i) - 1/I * \sum_i z'(i)) +  z(i) var_deriv_mod
+
+    It will simplify the code if we define:
+    For batch-renorm, target-rms = 1.0, so scale == rscale.  This way, we can write as follows:
+
+  BACKWARD PASS (recap):
+
+   var_deriv_mod = clipped_r^(1/power) * 2/I * power * (sum_i (z(i) - clipped_d) * z'(i)) * rscale^{-(1+power)/power}
+                .. which for power = -0.5, simplifies to:
+   var_deriv_mod = -1.0 * (clipped_r)^(-2) * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale
+
+           x'(i) = scale * (z'(i) - 1/I * \sum_i z'(i)) + z(i) var_deriv_mod
+*/
 void* BatchRenormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
                                     const CuMatrixBase<BaseFloat> &in,
                                     CuMatrixBase<BaseFloat> *out) const {
@@ -820,7 +927,7 @@ void* BatchRenormComponent::Propagate(const ComponentPrecomputedIndexes *indexes
     Memo *memo = new Memo;
     int32 num_frames = in.NumRows(), dim = block_dim_;
     memo->num_frames = num_frames;
-    memo->mean_uvar_scale.Resize(7, dim);
+    memo->mean_uvar_scale.Resize(8, dim);
     CuSubVector<BaseFloat> mean(memo->mean_uvar_scale, 0),
         uvar(memo->mean_uvar_scale, 1),
         scale(memo->mean_uvar_scale, 2),
@@ -932,18 +1039,26 @@ void BatchRenormComponent::Backprop(
         scale(memo->mean_uvar_scale, 2),
         var_deriv_mod(memo->mean_uvar_scale, 3),
         temp(memo->mean_uvar_scale, 4),
-        clipped_r(memo->mean_uvar_scale, 5);
+        clipped_r(memo->mean_uvar_scale, 5),
+        clipped_d(memo->mean_uvar_scale, 6);
 
     // var_deriv_mod is going to contain:
-    //  2 * power * target-rms^{1/power} * (1/I \sum_i z'(i) z(i)) * scale^{-(1+power)/power}
-    // which for power = -0.5 simplifies to:
-    // -1.0 / (target_rms * target_rms).
+    //  -1.0 * (clipped_r)^(-2) * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale
     // but for now we don't have the power of 'scale', we'll add that later.
-    BaseFloat coeff = -1.0 / (target_rms_ * target_rms_ * num_frames);
+    BaseFloat coeff = -1.0 / num_frames;
+    // z(i) - clipped_d
+    CuMatrix<BaseFloat> out_value_minus_clipped_d(out_value);
+    out_value_minus_clipped_d->AddVecToRows(-1.0, clipped_d, 1.0);    
 
-    var_deriv_mod.AddDiagMatMat(coeff, out_value, kTrans,
+    // -1.0 * (1/I \sum_i (z(i) - clipped_d) * z'(i))
+    var_deriv_mod.AddDiagMatMat(coeff, out_value_minus_clipped_d, kTrans,
                                 out_deriv, kNoTrans, 0.0);
+    // -1.0 * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale
     var_deriv_mod.MulElements(scale);
+    // -1.0 * (clipped_r)^(-2) * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale
+    clipped_r.ApplyPow(-2.0);
+    var_deriv_mod.MulElements(clipped_r);
+    clipped_r.ApplyPow(-0.5);
 
     temp.AddRowSumMat(-1.0 / num_frames, out_deriv, 0.0);
     // the following statement does no work if in_deriv and out_deriv are the
@@ -1018,14 +1133,14 @@ void BatchRenormComponent::StoreStats(
     moving_stddev_.CopyFromVec(scale);
     scale.ApplyPow(-1.0);
   } else {
-    BaseFloat renorm_momentum_2 = 1.0 - renorm_momentum_;
+    BaseFloat alpha_2 = 1.0 - alpha_;
 
-    moving_mean_.Scale(renorm_momentum_2);
-    moving_mean_.AddVec(renorm_momentum_, mean);
+    moving_mean_.Scale(alpha_2);
+    moving_mean_.AddVec(alpha_, mean);
 
     scale.ApplyPow(-1.0);
-    moving_stddev_.Scale(renorm_momentum_2);
-    moving_stddev_.AddVec(renorm_momentum_, scale);
+    moving_stddev_.Scale(alpha_2);
+    moving_stddev_.AddVec(alpha_, scale);
     scale.ApplyPow(-1.0);
   }
 }
@@ -1056,8 +1171,8 @@ void BatchRenormComponent::Read(std::istream &is, bool binary) {
   ReadBasicType(is, binary, &r_max_);
   ExpectToken(is, binary, "<DMaxCorrection>");
   ReadBasicType(is,  binary, &d_max_);
-  ExpectToken(is, binary, "<RenormMomentum>");
-  ReadBasicType(is, binary, &renorm_momentum_);
+  ExpectToken(is, binary, "<Alpha>");
+  ReadBasicType(is, binary, &alpha_);
   ExpectToken(is, binary, "<MovingMean>");
   moving_mean_.Read(is, binary);
   ExpectToken(is, binary, "<MovingStddev>");
@@ -1098,8 +1213,8 @@ void BatchRenormComponent::Write(std::ostream &os, bool binary) const {
   WriteBasicType(os, binary, r_max_);
   WriteToken(os, binary, "<DMaxCorrection>");
   WriteBasicType(os,  binary, d_max_);
-  WriteToken(os, binary, "<RenormMomentum>");
-  WriteBasicType(os, binary, renorm_momentum_);
+  WriteToken(os, binary, "<Alpha>");
+  WriteBasicType(os, binary, alpha_);
   WriteToken(os, binary, "<MovingMean>");
   moving_mean_.Write(os, binary);
   WriteToken(os, binary, "<MovingStddev>");
@@ -1143,7 +1258,7 @@ void BatchRenormComponent::ZeroStats() {
   }
 }
 
-void BatchNormComponent::SetBatchRenormCorrections(BaseFloat r_max, BaseFloat d_max) {
+void BatchRenormComponent::SetBatchRenormCorrections(BaseFloat r_max, BaseFloat d_max) {
    r_max_ = r_max;
    d_max_ = d_max;
  }
