@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
     po.Register("use-gpu", &use_gpu,
                 "yes|no|optional|wait, only has effect if compiled with CUDA");
     po.Register("batchnorm-test-mode", &batchnorm_test_mode,
-                "If true, set test-mode to true on any BatchNormComponents "
+                "If true, set test-mode to true on any BatchNormComponents and BatchRenormComponents"
                 "while evaluating objectives.");
     po.Register("dropout-test-mode", &dropout_test_mode,
                 "If true, set test-mode to true on any DropoutComponents and "

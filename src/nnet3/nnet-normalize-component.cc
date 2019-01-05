@@ -895,7 +895,6 @@ void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
     For batch-renorm, target-rms = 1.0, so scale == rscale.  This way, we can write as follows:
 
   BACKWARD PASS (recap):
-
    var_deriv_mod = clipped_r^(1/power) * 2/I * power * (sum_i (z(i) - clipped_d) * z'(i)) * rscale^{-(1+power)/power}
                 .. which for power = -0.5, simplifies to:
    var_deriv_mod = -1.0 * (clipped_r)^(-2) * (1/I \sum_i (z(i) - clipped_d) * z'(i)) * scale

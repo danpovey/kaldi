@@ -518,8 +518,10 @@ void SetDropoutProportion(BaseFloat dropout_proportion,
 bool HasBatchnorm(const Nnet &nnet) {
   for (int32 c = 0; c < nnet.NumComponents(); c++) {
     const Component *comp = nnet.GetComponent(c);
-    if ((dynamic_cast<const BatchNormComponent*>(comp) != NULL) || 
-        (dynamic_cast<const BatchRenormComponent*>(comp) != NULL))
+    if (dynamic_cast<const BatchNormComponent*>(comp) != NULL)
+      return true;
+    comp = nnet.GetComponent(c);
+    if (dynamic_cast<const BatchRenormComponent*>(comp) != NULL)
       return true;
   }
   return false;
@@ -536,6 +538,7 @@ void ScaleBatchnormStats(BaseFloat batchnorm_stats_scale,
     if (bc != NULL) {
       bc->Scale(batchnorm_stats_scale);
     } else {
+      comp = nnet->GetComponent(c);
       BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
       if (bc != NULL) {
         bc->Scale(batchnorm_stats_scale);
@@ -566,6 +569,7 @@ void SetBatchnormTestMode(bool test_mode,  Nnet *nnet) {
     if (bc != NULL) {
       bc->SetTestMode(test_mode);
     } else {
+      comp = nnet->GetComponent(c);
       BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
       if (bc != NULL) {
         bc->SetTestMode(test_mode);
@@ -1383,8 +1387,11 @@ class ModelCollapser {
         KALDI_ERR << "Something went wrong collapsing model.";
     }
     int32 num_components2 = nnet_->NumComponents();
+    KALDI_WARN << " ModelCollapser HERE 1 !!!!!!!";
     nnet_->RemoveOrphanNodes();
+    KALDI_WARN << " ModelCollapser HERE 2 !!!!!!!";
     nnet_->RemoveOrphanComponents();
+    KALDI_WARN << " ModelCollapser HERE 3 !!!!!!!";
     int32 num_components3 = nnet_->NumComponents();
     if (num_components2 != num_components1 ||
         num_components3 != num_components2)
@@ -1654,24 +1661,32 @@ class ModelCollapser {
     const BatchNormComponent *batchnorm_component =
         dynamic_cast<const BatchNormComponent*>(
             nnet_->GetComponent(component_index1));
-    if (batchnorm_component == NULL) {
-      const BatchRenormComponent *batchnorm_component =
-        dynamic_cast<const BatchRenormComponent*>(
-            nnet_->GetComponent(component_index1));
-            if (batchnorm_component == NULL) {
-              return -1;
-            }
+    const BatchRenormComponent *batchrenorm_component =
+      dynamic_cast<const BatchRenormComponent*>(
+          nnet_->GetComponent(component_index1));
+    if (batchnorm_component != NULL && batchrenorm_component != NULL) {
+      KALDI_ERR << "Something seems very wrong, a component belongs to both batch-norm and batch-renorm ?";
+    } else if (batchnorm_component == NULL && batchrenorm_component == NULL) {
+      return -1;
+    } else if (batchnorm_component != NULL) {
+      if (batchnorm_component->Offset().Dim() == 0) {
+        KALDI_ERR << "Expected batch-norm components to have test-mode set.";
+      }
+      std::string batchnorm_component_name = nnet_->GetComponentName(component_index1);
+      return GetDiagonallyPreModifiedComponentIndex(batchnorm_component->Offset(),
+                                                    batchnorm_component->Scale(),
+                                                    batchnorm_component_name,
+                                                    component_index2);
+    } else {
+      if (batchrenorm_component->Offset().Dim() == 0) {
+        KALDI_ERR << "Expected batch-norm components to have test-mode set.";
+      }
+      std::string batchrenorm_component_name = nnet_->GetComponentName(component_index1);
+      return GetDiagonallyPreModifiedComponentIndex(batchrenorm_component->Offset(),
+                                                    batchrenorm_component->Scale(),
+                                                    batchrenorm_component_name,
+                                                    component_index2);
     }
-
-    if (batchnorm_component->Offset().Dim() == 0) {
-      KALDI_ERR << "Expected batch-norm components to have test-mode set.";
-    }
-    std::string batchnorm_component_name = nnet_->GetComponentName(
-        component_index1);
-    return GetDiagonallyPreModifiedComponentIndex(batchnorm_component->Offset(),
-                                                  batchnorm_component->Scale(),
-                                                  batchnorm_component_name,
-                                                  component_index2);
   }
 
 
@@ -2025,7 +2040,9 @@ class ModelCollapser {
 
 void CollapseModel(const CollapseModelConfig &config,
                    Nnet *nnet) {
+  KALDI_WARN << " CollapseModel HERE 1 !!!!!!!";
   ModelCollapser c(config, nnet);
+  KALDI_WARN << " CollapseModel HERE 2 !!!!!!!";
   c.Collapse();
 }
 

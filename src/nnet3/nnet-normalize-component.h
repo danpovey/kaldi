@@ -224,6 +224,7 @@ class BatchNormComponent: public Component {
   // Note: the offset and scale will only be nonempty in 'test mode'.
   const CuVector<BaseFloat> &Offset() const { return offset_; }
   const CuVector<BaseFloat> &Scale() const { return scale_; }
+  bool IsBatchRenorm() const { return false; }
 
  private:
 
@@ -400,6 +401,7 @@ class BatchRenormComponent: public Component {
   // Note: the offset and scale will only be nonempty in 'test mode'.
   const CuVector<BaseFloat> &Offset() const { return offset_; }
   const CuVector<BaseFloat> &Scale() const { return scale_; }
+  bool IsBatchRenorm() const { return true; }
 
  private:
 

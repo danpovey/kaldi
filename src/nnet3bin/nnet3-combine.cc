@@ -106,7 +106,7 @@ int main(int argc, char *argv[]) {
                 "if the number of models provided to this binary is quite "
                 "large (e.g. several hundred)."); 
     po.Register("batchnorm-test-mode", &batchnorm_test_mode,
-                "If true, set test-mode to true on any BatchNormComponents "
+                "If true, set test-mode to true on any BatchNormComponents or BatchRenormComponents"
                 "while evaluating objectives.");
     po.Register("dropout-test-mode", &dropout_test_mode,
                 "If true, set test-mode to true on any DropoutComponents and "
