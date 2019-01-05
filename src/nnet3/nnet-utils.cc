@@ -1387,11 +1387,8 @@ class ModelCollapser {
         KALDI_ERR << "Something went wrong collapsing model.";
     }
     int32 num_components2 = nnet_->NumComponents();
-    KALDI_WARN << " ModelCollapser HERE 1 !!!!!!!";
     nnet_->RemoveOrphanNodes();
-    KALDI_WARN << " ModelCollapser HERE 2 !!!!!!!";
     nnet_->RemoveOrphanComponents();
-    KALDI_WARN << " ModelCollapser HERE 3 !!!!!!!";
     int32 num_components3 = nnet_->NumComponents();
     if (num_components2 != num_components1 ||
         num_components3 != num_components2)
@@ -2040,9 +2037,7 @@ class ModelCollapser {
 
 void CollapseModel(const CollapseModelConfig &config,
                    Nnet *nnet) {
-  KALDI_WARN << " CollapseModel HERE 1 !!!!!!!";
   ModelCollapser c(config, nnet);
-  KALDI_WARN << " CollapseModel HERE 2 !!!!!!!";
   c.Collapse();
 }
 
