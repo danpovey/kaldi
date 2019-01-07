@@ -1236,10 +1236,14 @@ void BatchRenormComponent::Scale(BaseFloat scale) {
     count_ = 0.0;
     stats_sum_.SetZero();
     stats_sumsq_.SetZero();
+    moving_mean_.SetZero();
+    moving_stddev_.SetZero();
   } else {
     count_ *= scale;
     stats_sum_.Scale(scale);
     stats_sumsq_.Scale(scale);
+    moving_mean_.Scale(scale);
+    moving_stddev_.Scale(scale);
   }
 }
 
@@ -1250,6 +1254,8 @@ void BatchRenormComponent::Add(BaseFloat alpha, const Component &other_in) {
   count_ += alpha * other->count_;
   stats_sum_.AddVec(alpha, other->stats_sum_);
   stats_sumsq_.AddVec(alpha, other->stats_sumsq_);
+  moving_mean_.AddVec(alpha, other->moving_mean_);
+  moving_stddev_.AddVec(alpha, other->moving_stddev_);
   // this operation might change offset_ and scale_, so we recompute them
   // in this instance (but not in Scale()).
   ComputeDerived();
