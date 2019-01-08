@@ -386,6 +386,7 @@ class BatchRenormComponent: public Component {
   virtual Component* Copy() const { return new BatchRenormComponent(*this); }
 
   virtual void Scale(BaseFloat scale);
+  virtual void Scale_Training(BaseFloat scale);
   virtual void Add(BaseFloat alpha, const Component &other);
   virtual void ZeroStats();
 
@@ -456,7 +457,7 @@ class BatchRenormComponent: public Component {
   // the stats from the most recent [script-level] iteration of training.
   bool test_mode_;
 
-
+  double average_count_;
   // total count of stats stored by StoreStats().
   double count_;
   // sum-of-data component of stats of input data.

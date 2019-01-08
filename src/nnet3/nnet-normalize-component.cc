@@ -742,7 +742,7 @@ BatchRenormComponent::BatchRenormComponent(const BatchRenormComponent &other):
     test_mode_(other.test_mode_), count_(other.count_),
     stats_sum_(other.stats_sum_), stats_sumsq_(other.stats_sumsq_),
     training_begining_(other.training_begining_), 
-    r_max_(other.r_max_), d_max_(other.d_max_),
+    r_max_(other.r_max_), d_max_(other.d_max_), average_count_(other.average_count_),
     alpha_(other.alpha_), moving_mean_(other.moving_mean_),
     moving_stddev_(other.moving_stddev_) {
   ComputeDerived();
@@ -804,6 +804,7 @@ void BatchRenormComponent::InitFromConfig(ConfigLine *cfl) {
     KALDI_ERR << "Could not process these elements in initializer: "
               << cfl->UnusedValues();
   count_ = 0;
+  average_count_ = 1.0;
   stats_sum_.Resize(block_dim_);
   stats_sumsq_.Resize(block_dim_);
   moving_stddev_.Resize(block_dim_);
@@ -1231,11 +1232,15 @@ void BatchRenormComponent::Write(std::ostream &os, bool binary) const {
   WriteToken(os, binary, "</BatchRenormComponent>");
 }
 
-void BatchRenormComponent::Scale(BaseFloat scale) {
+void BatchRenormComponent::Scale_Training(BaseFloat scale) {
+  KALDI_WARN << "Scale during training : "<< scale;
   if (scale == 0) {
     count_ = 0.0;
+    average_count_ = 0.0;
     stats_sum_.SetZero();
     stats_sumsq_.SetZero();
+    moving_mean_.SetZero();
+    moving_stddev_.SetZero();
   } else {
     count_ *= scale;
     stats_sum_.Scale(scale);
@@ -1243,6 +1248,24 @@ void BatchRenormComponent::Scale(BaseFloat scale) {
   }
 }
 
+void BatchRenormComponent::Scale(BaseFloat scale) {
+  KALDI_WARN << "Scale during averaging : " << scale;
+  if (scale == 0) {
+    count_ = 0.0;
+    average_count_ = 0.0;
+    stats_sum_.SetZero();
+    stats_sumsq_.SetZero();
+    moving_mean_.SetZero();
+    moving_stddev_.SetZero();
+  } else {
+    count_ *= scale;
+    average_count_ *= scale;
+    stats_sum_.Scale(scale);
+    stats_sumsq_.Scale(scale);
+    moving_mean_.Scale(scale);
+    moving_stddev_.Scale(scale);
+  }
+}
 
 void BatchRenormComponent::Add(BaseFloat alpha, const Component &other_in) {
   const BatchRenormComponent *other =
@@ -1250,6 +1273,22 @@ void BatchRenormComponent::Add(BaseFloat alpha, const Component &other_in) {
   count_ += alpha * other->count_;
   stats_sum_.AddVec(alpha, other->stats_sum_);
   stats_sumsq_.AddVec(alpha, other->stats_sumsq_);
+  
+  KALDI_WARN << "Average_count : " << average_count_;
+  KALDI_WARN << "Other Average_count : " << other->average_count_;
+  KALDI_WARN << "Add alpha scale : "<< alpha;
+  double average_count_copy(average_count_);
+  CuVector<BaseFloat> moving_mean_copy(moving_mean_), moving_stddev_copy(moving_stddev_);
+  KALDI_WARN << "Moving mean copy : " << SummarizeVector(moving_mean_copy);
+  KALDI_WARN << "Moving stddev copy : "<< SummarizeVector(moving_stddev_copy); 
+  average_count_ += alpha * other->average_count_;
+  moving_mean_.AddVec(alpha, other->moving_mean_);
+  moving_stddev_.AddVec(alpha, other->moving_stddev_);
+  moving_mean_.Scale(1.0 / average_count_);
+  moving_stddev_.Scale(1.0 / average_count_);
+  KALDI_WARN << "Moving mean copy after: " << SummarizeVector(moving_mean_copy);
+  KALDI_WARN << "Moving stddev copy after: "<< SummarizeVector(moving_stddev_copy); 
+  average_count_ = average_count_copy;
   // this operation might change offset_ and scale_, so we recompute them
   // in this instance (but not in Scale()).
   ComputeDerived();
@@ -1262,6 +1301,7 @@ void BatchRenormComponent::ZeroStats() {
   // parameters (offset_ and scale_).
   if (!test_mode_) {
     count_ = 0.0;
+    average_count_ = 1.0;
     stats_sum_.SetZero();
     stats_sumsq_.SetZero();
   }

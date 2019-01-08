@@ -305,7 +305,13 @@ void ScaleNnet(BaseFloat scale, Nnet *nnet) {
   else {
     for (int32 c = 0; c < nnet->NumComponents(); c++) {
       Component *comp = nnet->GetComponent(c);
-      comp->Scale(scale);
+      BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
+      if (bc != NULL) {
+        bc->Scale_Training(scale);
+      } else {
+        Component *comp = nnet->GetComponent(c);
+        comp->Scale(scale);
+      }
     }
   }
 }
@@ -541,7 +547,7 @@ void ScaleBatchnormStats(BaseFloat batchnorm_stats_scale,
       comp = nnet->GetComponent(c);
       BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
       if (bc != NULL) {
-        bc->Scale(batchnorm_stats_scale);
+        bc->Scale_Training(batchnorm_stats_scale);
       }
     }
   }
