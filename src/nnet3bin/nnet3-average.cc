@@ -61,7 +61,7 @@ void ReadModels(std::vector<std::pair<std::string, BaseFloat> > models_and_weigh
   try {
     int32 n = models_and_weights.size();
     ReadKaldiObject(models_and_weights[0].first, output_nnet);
-    ScaleNnet(models_and_weights[0].second, output_nnet);
+    ScaleNnetForAverage(models_and_weights[0].second, output_nnet);
     for (int32 i = 1; i < n; i++) {
       Nnet nnet;
       ReadKaldiObject(models_and_weights[i].first, &nnet);

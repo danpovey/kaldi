@@ -1187,6 +1187,8 @@ void BatchRenormComponent::Read(std::istream &is, bool binary) {
   moving_mean_.Read(is, binary);
   ExpectToken(is, binary, "<MovingStddev>");
   moving_stddev_.Read(is, binary);
+  ExpectToken(is, binary, "<AverageCount>");
+  ReadBasicType(is, binary, &average_count_);
   ExpectToken(is, binary, "</BatchRenormComponent>");
   ComputeDerived();
   Check();
@@ -1229,6 +1231,8 @@ void BatchRenormComponent::Write(std::ostream &os, bool binary) const {
   moving_mean_.Write(os, binary);
   WriteToken(os, binary, "<MovingStddev>");
   moving_stddev_.Write(os, binary);
+  WriteToken(os, binary, "<AverageCount>");
+  WriteBasicType(os, binary, average_count_);
   WriteToken(os, binary, "</BatchRenormComponent>");
 }
 

@@ -66,7 +66,7 @@ double ComputeObjf(bool batchnorm_test_mode, bool dropout_test_mode,
 void UpdateNnetMovingAverage(int32 num_models,
     const Nnet &nnet, Nnet *moving_average_nnet) {
   KALDI_ASSERT(NumParameters(nnet) == NumParameters(*moving_average_nnet));
-  ScaleNnet((num_models - 1.0) / num_models, moving_average_nnet);
+  ScaleNnetForAverage((num_models - 1.0) / num_models, moving_average_nnet);
   AddNnet(nnet, 1.0 / num_models, moving_average_nnet);
 }
 

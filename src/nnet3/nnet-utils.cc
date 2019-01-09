@@ -316,6 +316,16 @@ void ScaleNnet(BaseFloat scale, Nnet *nnet) {
   }
 }
 
+void ScaleNnetForAverage(BaseFloat scale, Nnet *nnet) {
+  if (scale == 1.0) return;
+  else {
+    for (int32 c = 0; c < nnet->NumComponents(); c++) {
+      Component *comp = nnet->GetComponent(c);
+      comp->Scale(scale);
+    }
+  }
+}
+
 void AddNnetComponents(const Nnet &src, const Vector<BaseFloat> &alphas,
                        BaseFloat scale, Nnet *dest) {
   if (src.NumComponents() != dest->NumComponents())
