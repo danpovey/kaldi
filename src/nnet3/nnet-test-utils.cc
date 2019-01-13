@@ -1400,7 +1400,7 @@ void ComputeExampleComputationRequestSimple(
 static void GenerateRandomComponentConfig(std::string *component_type,
                                           std::string *config) {
 
-  int32 n = RandInt(0, 37);
+  int32 n = RandInt(0, 39);
   BaseFloat learning_rate = 0.001 * RandInt(1, 100);
 
   std::ostringstream os;
@@ -1771,6 +1771,30 @@ static void GenerateRandomComponentConfig(std::string *component_type,
       os << "cell-dim=" << RandInt(10, 20)
          << " learning-rate=" << learning_rate;
 
+      break;
+    }
+    case 38: {
+      *component_type = "MeanNormComponent";
+      if (RandInt(0,1) == 0) {
+        os << "dim=" << RandInt(10,20);
+      } else {
+        int32 block_dim = RandInt(5,10), dim = RandInt(2,3) * block_dim;
+        os << "block-dim=" << block_dim << " dim=" << dim;
+      }
+      //os << " backprop-normalize-scale=" << (0.5 * RandInt(0,2));
+      os << " backprop-normalize-scale=0";  // <-- or the standard tests will fail.
+      break;
+    }
+    case 39: {
+      *component_type = "VarNormComponent";
+      if (RandInt(0,1) == 0) {
+        os << "dim=" << RandInt(10,20);
+      } else {
+        int32 block_dim = RandInt(5,10), dim = RandInt(2,3) * block_dim;
+        os << "block-dim=" << block_dim << " dim=" << dim;
+      }
+      //os << " average-r=" << (RandInt(0,1) == 0 ? "true" : "false");
+      os << " average-r=false";
       break;
     }
     default:

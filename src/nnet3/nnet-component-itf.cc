@@ -173,6 +173,10 @@ Component* Component::NewComponentOfType(const std::string &component_type) {
     ans = new LstmNonlinearityComponent();
   } else if (component_type == "BatchNormComponent") {
     ans = new BatchNormComponent();
+  } else if (component_type == "MeanNormComponent") {
+    ans = new MeanNormComponent();
+  } else if (component_type == "VarNormComponent") {
+    ans = new VarNormComponent();
   } else if (component_type == "TimeHeightConvolutionComponent") {
     ans = new TimeHeightConvolutionComponent();
   } else if (component_type == "RestrictedAttentionComponent") {

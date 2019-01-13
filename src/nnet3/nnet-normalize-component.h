@@ -150,7 +150,7 @@ class NormalizeComponent: public Component {
                         means that the stats from n'th element of each
                         block are pooled into one class, for each n.
            epsilon      Small term added to the variance that is used to prevent
-                        division by zero
+                        division by zero.  Defaults to 0.001.
            target-rms   This defaults to 1.0, but if set, for instance, to 2.0,
                         it will normalize the standard deviation of the output to
                         2.0. 'target-stddev' might be a more suitable name, but this
@@ -211,7 +211,6 @@ class BatchNormComponent: public Component {
   virtual void Scale(BaseFloat scale);
   virtual void Add(BaseFloat alpha, const Component &other);
   virtual void ZeroStats();
-
 
   virtual void DeleteMemo(void *memo) const { delete static_cast<Memo*>(memo); }
 
@@ -292,6 +291,370 @@ class BatchNormComponent: public Component {
   // values are not kept around.
   CuVector<BaseFloat> offset_;
   CuVector<BaseFloat> scale_;
+};
+
+
+
+/*
+  MeanNormComponent
+
+  This component is intended to be used just before VarNormComponent, as a
+  substitute for BatchBormComponent that is suitable when different minibatches
+  might have different data distributions (e.g., might come from different
+  languages).  So together they perform the same function as Batch
+  Renormalization.
+
+  It adds an offset to its input that ensures that (averaged over time), the
+  input has zero mean.  It also, optionally, mean-normalizes the backpropagated
+  derivatives per minibatch, which might help stabilize training (although this
+  is kind of non-ideal from a theoretical convergence perspective; it would be
+  better to do some averaging over time, but this might interact in a nontrivial
+  way with max-change and the like).
+
+  What this component does can be summarized as follows; we'll write this for
+  a single dimension.  Assume the current minibatch size is n.  Then this
+  component does:
+
+        count += n
+            m += \sum_{i=1}^n  x_i
+
+  and in the forward propagation, it does:
+
+            y_i := x_i - (m / count)
+
+  In the backprop, it does:
+
+         \hat{x}_i := \hat{y}_i  -  backprop_normalize_scale * (\sum_i \hat{y}_i) / n
+
+  and the user can set backprop_normalize_scale to a value in the range [0, 1].
+
+  In test mode it doesn't update the stats.
+
+  You'd actually want to have 'count', and 'm', decaying over time, but that's
+  done as a call to this class, by calling Scale(), which scales these stats
+  (probably down).  You can call ScaleBatchnormStats() to have this called.
+
+    Accepted configuration values:
+           dim          Dimension of the input and output
+           block-dim    Defaults to 'dim', but may be set to a divisor
+                        of 'dim'.  In this case, each block of dimension 'block-dim'
+                        is treated like a separate row of the input matrix, which
+                        means that the stats from n'th element of each
+                        block are pooled into one class, for each n.
+   backprop-normalize-scale   Scaling value between 0 and 1 (default: 0)
+                        which affects the behavior in backprop.
+ */
+class MeanNormComponent: public Component {
+ public:
+
+  MeanNormComponent() { }
+
+  // call this with 'true' to set 'test mode', which will turn off accumulation
+  // of statistics.
+  void SetTestMode(bool test_mode);
+
+  // constructor using another component
+  MeanNormComponent(const MeanNormComponent &other);
+
+  virtual int32 InputDim() const { return dim_; }
+  virtual int32 OutputDim() const { return dim_; }
+
+  virtual std::string Info() const;
+  virtual void InitFromConfig(ConfigLine *cfl);
+  virtual std::string Type() const { return "MeanNormComponent"; }
+  virtual int32 Properties() const {
+    // If the block-dim is less than the dim, we need the input and output
+    // matrices to be contiguous (stride==num-cols), as we'll be reshaping
+    // internally.
+    return kSimpleComponent|kPropagateInPlace|kBackpropInPlace|
+        (block_dim_ < dim_ ? kInputContiguous|kOutputContiguous : 0)|
+        (test_mode_ ? 0 : kUsesMemo|kStoresStats);
+  }
+  virtual void* Propagate(const ComponentPrecomputedIndexes *indexes,
+                         const CuMatrixBase<BaseFloat> &in,
+                         CuMatrixBase<BaseFloat> *out) const;
+  virtual void Backprop(const std::string &debug_info,
+                        const ComponentPrecomputedIndexes *indexes,
+                        const CuMatrixBase<BaseFloat> &in_value,
+                        const CuMatrixBase<BaseFloat> &out_value,
+                        const CuMatrixBase<BaseFloat> &out_deriv,
+                        void *memo,
+                        Component *, // to_update,
+                        CuMatrixBase<BaseFloat> *in_deriv) const;
+
+  virtual void Read(std::istream &is, bool binary); // This Read function
+  // requires that the Component has the correct type.
+
+  /// Write component to stream
+  virtual void Write(std::ostream &os, bool binary) const;
+  virtual Component* Copy() const { return new MeanNormComponent(*this); }
+
+  virtual void Scale(BaseFloat scale);
+  virtual void Add(BaseFloat alpha, const Component &other);
+  // Note: there is no ZeroStats() function-- we use the base-class one that
+  // does nothing-- since zeroing the stats at the beginning of each training
+  // jobs could adversely affect the performance of this method.  (The stats
+  // stored here are not purely diagnostic like they are for most components
+  // that store stats).
+
+  virtual void DeleteMemo(void *memo) const { delete static_cast<Memo*>(memo); }
+
+  virtual void StoreStats(const CuMatrixBase<BaseFloat> &in_value,
+                          const CuMatrixBase<BaseFloat> &out_value,
+                          void *memo);
+
+  // Members specific to this component type.
+  const CuVector<BaseFloat> &Offset() const { return offset_; }
+
+ private:
+
+  struct Memo {
+    // number of frames (after any reshaping).
+    int32 num_frames;
+    // Row 0 = sum = the sum of the rows of the input
+    // Row 1 is the offset we'll be using for this minibatch.
+    // Row 2 is a temporary that we use in backprop.
+    CuMatrix<BaseFloat> sum_offset_temp;
+  };
+
+  void Check() const;
+
+  // Dimension of the input and output.
+  int32 dim_;
+
+  // block_dim_ would normally be the same as dim_, but if it's less (and it
+  // must be > 0 and must divide dim_), then each separate block of the input of
+  // dimension 'block_dim_' is treated like a separate frame for the purposes of
+  // normalization.  This can be used to implement spatial batch normalization
+  // for convolutional setups-- assuming the filter-dim has stride 1, which it
+  // always will in the new code in nnet-convolutional-component.h.
+  int32 block_dim_;
+
+
+  // Value in the range [0.0, 1.0] that affects how the backprop works;
+  // see comment above the class definition for explanation.
+  BaseFloat backprop_normalize_scale_;
+
+  // If test mode is set this component doesn't store any further stats, but
+  // uses the stats that were previously stored.
+  bool test_mode_;
+
+  // total count of stats stored by StoreStats().
+  double count_;
+  // sum of the input data.
+  CuVector<BaseFloat> stats_sum_;
+
+  // offset_  is derived from stats_sum_ and count_; it's updated every
+  // time stats_sum_ and count_ are updated (e.g. when StoreStats() is called).
+  CuVector<BaseFloat> offset_;
+};
+
+
+/*
+  VarNormComponent
+
+  This component is intended to be used just after MeanNormComponent, as a
+  substitute for BatchBormComponent that is suitable when different minibatches
+  might have different data distributions (e.g., might come from different
+  languages).  So together they perform the same function as Batch
+  Renormalization.
+
+  This component scales its input per dimension, where the scale is computed,
+  based on moving average stats over multiple minibatches.  It also, per
+  minibatch, modifies the backpropagated statistics so as to reflect invariance
+  w.r.t. a scaling factor.  This is similar to Batch Renormalization.
+
+  What is does can be summarized as follows; we'll write this for a single
+  dimension.  Assume the current minibatch size is n.  Then this component does:
+
+        count += n
+            s += \sum_{i=1}^n  x_i^2
+        scale := (epsilon + s / count)^{-0.5}
+
+  and in the forward propagation, it does:
+
+            y_i := x_i * scale
+
+  In the backprop, it does (note: this is what we do in principle, but
+  wee the actual formula we use in practice further below):
+
+             r :=  scale * (\sum_{i=1}^n \hat{y}_i y_i) / (\sum_{i=1}^n y_i^2)
+
+   then we do:
+      \hat{x}_i := scale * \hat{y}_i - r * y_i
+
+   The formula above for r is the one that ensures that:
+          \sum_i \hat{x}_i x_i  = 0
+   which is the condition where the output is insensitive to a scaling of the
+   input.  This is kind of an approximation to what we really want; it would
+   be more ideal to accumulate a version of 'r' that was an average over many
+   minibatches, and use that.  We can have an option average_r to
+   allow time-averaging of r.
+
+   We can derive the formula for r as follows.  First replace x_i with y_i,
+    since the expression differs only by a positive scalar 'scale', and y_i
+    ends up being more convenient:
+          \sum_i \hat{x}_i y_i  = 0
+
+          \sum_i (scale * \hat{y}_i - r * y_i) * y_i = 0
+          \sum_i scale * \hat{y}_i * y_i - r * y_i^2 = 0
+          \sum_i scale * \hat{y}_i * y_i  = r * \sum_i y_i^2
+           r :=   scale * (\sum_i \hat{y}_i * y_i) / (\sum_i y_i^2)
+              \simeq  scale * (\sum_i \hat{y}_i * y_i) / n
+
+   Note: to simplify the formula for r, we make the approximation that
+   (\sum_{i=1}^n y_i^2) == n, which it is, almost, except when the input size is
+   comparable to epsilon_ or smaller (and we don't really care about this term
+   in that pathological case anyway-- this term's function is to prevent blowup
+   of the input, and we *want* blowup in that case).
+
+    so we let r be as follows:
+             r :=  scale * (\sum_{i=1}^n \hat{y}_i y_i) / n
+
+  You'd actually want to have 'count', and 's', decaying over time, but that's
+  done as a call to this class, by calling Scale(), which scales these stats
+  (probably down).  You can call ScaleBatchnormStats() to have this called.
+
+    Accepted configuration values:
+           dim          Dimension of the input and output
+           block-dim    Defaults to 'dim', but may be set to a divisor
+                        of 'dim'.  In this case, each block of dimension 'block-dim'
+                        is treated like a separate row of the input matrix, which
+                        means that the stats from n'th element of each
+                        block are pooled into one class, for each n.
+           epsilon      Minimum variance (added to the actual variance).
+                        Defaults to 0.001.
+          average-r     Boolean, default true.  If true, 'r' (the term that
+                        ensures that the input derivatives are insensitive to
+                        scaling of the input) is averaged over time, instead of
+                        being computed on the current minibatch.  As for the
+                        forward stats, the averaging over time (downweighting of
+                        old frames) is controlled externally to this class, via
+                        the utility function ScaleBatchnormStats(), which calls
+                        the Scale() function of this component.
+ */
+class VarNormComponent: public Component {
+ public:
+
+  VarNormComponent() { }
+
+  // call this with 'true' to set 'test mode', which will turn off accumulation
+  // of statistics.
+  void SetTestMode(bool test_mode);
+
+  // constructor using another component
+  VarNormComponent(const VarNormComponent &other);
+
+  virtual int32 InputDim() const { return dim_; }
+  virtual int32 OutputDim() const { return dim_; }
+
+  virtual std::string Info() const;
+  virtual void InitFromConfig(ConfigLine *cfl);
+  virtual std::string Type() const { return "VarNormComponent"; }
+  virtual int32 Properties() const {
+    // If the block-dim is less than the dim, we need the input and output
+    // matrices to be contiguous (stride==num-cols), as we'll be reshaping
+    // internally.
+    return kSimpleComponent|kPropagateInPlace|kBackpropInPlace|
+        kBackpropNeedsOutput|
+        (block_dim_ < dim_ ? kInputContiguous|kOutputContiguous : 0)|
+        (test_mode_ ? 0 : kUsesMemo|kStoresStats);
+  }
+  virtual void* Propagate(const ComponentPrecomputedIndexes *indexes,
+                         const CuMatrixBase<BaseFloat> &in,
+                         CuMatrixBase<BaseFloat> *out) const;
+  virtual void Backprop(const std::string &debug_info,
+                        const ComponentPrecomputedIndexes *indexes,
+                        const CuMatrixBase<BaseFloat> &in_value,
+                        const CuMatrixBase<BaseFloat> &out_value,
+                        const CuMatrixBase<BaseFloat> &out_deriv,
+                        void *memo,
+                        Component *, // to_update,
+                        CuMatrixBase<BaseFloat> *in_deriv) const;
+
+  virtual void Read(std::istream &is, bool binary); // This Read function
+  // requires that the Component has the correct type.
+
+  /// Write component to stream
+  virtual void Write(std::ostream &os, bool binary) const;
+  virtual Component* Copy() const { return new VarNormComponent(*this); }
+
+  virtual void Scale(BaseFloat scale);
+  virtual void Add(BaseFloat alpha, const Component &other);
+  // Note: there is no ZeroStats() function-- we use the base-class one that
+  // does nothing-- since zeroing the stats at the beginning of each training
+  // jobs could adversely affect the performance of this method.  (The stats
+  // stored here are not purely diagnostic like they are for most components
+  // that store stats).
+
+  virtual void DeleteMemo(void *memo) const { delete static_cast<Memo*>(memo); }
+
+  virtual void StoreStats(const CuMatrixBase<BaseFloat> &in_value,
+                          const CuMatrixBase<BaseFloat> &out_value,
+                          void *memo);
+
+  // Members specific to this component type.
+  const CuVector<BaseFloat> &Scale() const { return scale_; }
+
+ private:
+
+  struct Memo {
+    // number of frames (after any reshaping).
+    int32 num_frames;
+    // Row 0 = sumsq = contains \sum_{i=1}^n x_i^2
+    // Row 1 = scale   (the scale we used in the forward propagation)
+    // Row 2 is used as a temporary in Backprop.
+    CuMatrix<BaseFloat> sumsq_scale_temp;
+  };
+
+  void Check() const;
+
+  // Dimension of the input and output.
+  int32 dim_;
+
+  // block_dim_ would normally be the same as dim_, but if it's less (and it
+  // must be > 0 and must divide dim_), then each separate block of the input of
+  // dimension 'block_dim_' is treated like a separate frame for the purposes of
+  // normalization.  This can be used to implement spatial batch normalization
+  // for convolutional setups-- assuming the filter-dim has stride 1, which it
+  // always will in the new code in nnet-convolutional-component.h.
+  int32 block_dim_;
+
+  // A configuration variable which is like a variance floor (but added, not
+  // floored).  Defaults to 0.001.
+  BaseFloat epsilon_;
+
+  // True if, in the backprop pass, we use stats averaged over multiple
+  // minibatches to compute the term that captures scale invariance of the
+  // derivatives w.r.t. the input.  (Note: MeanNormComponent does not have this
+  // feature because I don't think that cancelation of the derivative will even
+  // be necessary at all in case of the mean)
+  bool average_r_;
+
+  // If test mode is set this component doesn't store any further stats, but
+  // uses the stats that were previously stored.
+  bool test_mode_;
+
+  // total count of stats stored by StoreStats().
+  BaseFloat count_;
+  // sum of the input data squared, i.e. \sum_i x_i^2
+  CuVector<BaseFloat> stats_sumsq_;
+
+  // scale_ is derived from stats_sumsq_ and count_; it's updated every time
+  // stats_sumsq_ and count_ are updated (e.g. when StoreStats() is called).
+  CuVector<BaseFloat> scale_;
+
+  // The count of stats corresponding to 'r' (a quantity used in
+  // the backprop to cancel out the derivative w.r.t. the scaling
+  // factor).  Has the dimension of a number of frames, like count_,
+  // but we store it separately in case Backprop() is not called,
+  // and also as it's computed using a different path that has
+  // max-change code involved, so that may make the count differ.
+  BaseFloat r_count_;
+  // The sum of the 'r', scaled by r_count_; you'd divide by
+  // r_count_ to get the actual 'r' value.
+  CuVector<BaseFloat> r_sum_;
+
 };
 
 

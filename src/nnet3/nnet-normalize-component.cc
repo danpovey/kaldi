@@ -676,5 +676,586 @@ void BatchNormComponent::ZeroStats() {
 }
 
 
+MeanNormComponent::MeanNormComponent(const MeanNormComponent &other):
+    dim_(other.dim_), block_dim_(other.block_dim_),
+    backprop_normalize_scale_(other.backprop_normalize_scale_),
+    test_mode_(other.test_mode_), count_(other.count_),
+    stats_sum_(other.stats_sum_), offset_(other.offset_) { }
+
+
+void MeanNormComponent::SetTestMode(bool test_mode) {
+  test_mode_ = test_mode;
+}
+
+void MeanNormComponent::Check() const {
+  KALDI_ASSERT(dim_ > 0 && block_dim_ > 0 && dim_ % block_dim_ == 0 &&
+               backprop_normalize_scale_ >= 0.0 &&
+               backprop_normalize_scale_ <= 1.0 &&
+               count_ >= 0 && stats_sum_.Dim() == block_dim_ &&
+               offset_.Dim() == block_dim_);
+}
+
+std::string MeanNormComponent::Info() const {
+  std::ostringstream stream;
+  Check();
+  stream << Type() << ", dim=" << dim_ << ", block-dim=" << block_dim_
+         << ", backprop-normalize-scale=" << backprop_normalize_scale_
+         << ", count=" << count_
+         << ", test-mode=" << (test_mode_ ? "true" : "false")
+         << ", offset=" << SummarizeVector(offset_);
+  return stream.str();
+}
+
+void MeanNormComponent::InitFromConfig(ConfigLine *cfl) {
+  dim_ = -1;
+  block_dim_ = -1;
+  test_mode_ = false;
+  backprop_normalize_scale_ = 0.0;
+  bool ok = cfl->GetValue("dim", &dim_);
+  cfl->GetValue("block-dim", &block_dim_);
+  cfl->GetValue("test-mode", &test_mode_);
+  cfl->GetValue("backprop-normalize-scale", &backprop_normalize_scale_);
+  if (!ok || dim_ <= 0) {
+    KALDI_ERR << "MeanNormComponent must have 'dim' specified, and > 0";
+  }
+  if (block_dim_ == -1)
+    block_dim_ = dim_;
+  if (!(block_dim_ > 0 && dim_ % block_dim_ == 0))
+    KALDI_ERR << "Invalid configuration in MeanNormComponent.";
+  if (cfl->HasUnusedValues())
+    KALDI_ERR << "Could not process these elements in initializer: "
+              << cfl->UnusedValues();
+  count_ = 0;
+  stats_sum_.Resize(block_dim_);
+  offset_.Resize(block_dim_);
+  Check();
+}
+
+
+void* MeanNormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
+                                   const CuMatrixBase<BaseFloat> &in,
+                                   CuMatrixBase<BaseFloat> *out) const {
+  KALDI_ASSERT(SameDim(in, *out) &&
+               (in.NumCols() == dim_ || in.NumCols() == block_dim_));
+  if (in.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(in.Stride() == in.NumCols() && out->Stride() == out->NumCols());
+    int32 ratio = dim_ / block_dim_, orig_rows = in.NumRows(),
+        orig_cols = in.NumCols(), new_rows = orig_rows * ratio,
+        new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> in_reshaped(in.Data(), new_rows, new_cols, new_cols),
+        out_reshaped(out->Data(), new_rows, new_cols, new_cols);
+    return Propagate(indexes, in_reshaped, &out_reshaped);
+  }
+
+  // From this point, we can assume that the num-cols of 'in' and 'out'
+  // equals block_dim_.
+  if (!test_mode_) {
+    Memo *memo = new Memo;
+    int32 num_frames = in.NumRows(), dim = block_dim_;
+    memo->num_frames = num_frames;
+    memo->sum_offset_temp.Resize(3, dim);
+    CuSubVector<BaseFloat> sum(memo->sum_offset_temp, 0),
+        offset(memo->sum_offset_temp, 1);
+    sum.AddRowSumMat(1.0, in, 0.0);
+    offset.CopyFromVec(sum);
+    offset.AddVec(1.0, stats_sum_);
+    offset.Scale(-1.0 / (num_frames + count_));
+
+    // the next command will do no work if out == in, for in-place propagation.
+    out->CopyFromMat(in);
+    out->AddVecToRows(1.0, offset, 1.0);
+    return static_cast<void*>(memo);
+  } else {
+    out->CopyFromMat(in);
+    out->AddVecToRows(1.0, offset_, 1.0);
+    return NULL;
+  }
+}
+
+void MeanNormComponent::Backprop(
+    const std::string &debug_info,
+    const ComponentPrecomputedIndexes *indexes,
+    const CuMatrixBase<BaseFloat> &in_value,  // unused
+    const CuMatrixBase<BaseFloat> &out_value,
+    const CuMatrixBase<BaseFloat> &out_deriv,
+    void *memo_in,
+    Component *to_update,  // unused
+    CuMatrixBase<BaseFloat> *in_deriv) const {
+
+  KALDI_ASSERT(SameDim(out_deriv, *in_deriv) &&
+               (out_deriv.NumCols() == dim_ ||
+                out_deriv.NumCols() == block_dim_));
+  if (out_deriv.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(out_deriv.Stride() == out_deriv.NumCols() &&
+                 in_deriv->Stride() == in_deriv->NumCols());
+    int32 ratio = dim_ / block_dim_,
+        orig_rows = out_deriv.NumRows(),
+        orig_cols = out_deriv.NumCols(),
+        new_rows = orig_rows * ratio, new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat>
+        out_deriv_reshaped(out_deriv.Data(), new_rows, new_cols, new_cols),
+        in_deriv_reshaped(in_deriv->Data(), new_rows, new_cols, new_cols);
+    // we'll never use in_value or out_value, so pass them in unchanged.
+    Backprop(debug_info, indexes, in_value,
+             out_value, out_deriv_reshaped,
+             memo_in, to_update, &in_deriv_reshaped);
+    return;
+  }
+
+  Memo *memo = static_cast<Memo*>(memo_in);
+
+
+  // the following statement does no work if in_deriv and out_deriv are the
+  // same matrix.
+  in_deriv->CopyFromMat(out_deriv);
+
+  if (test_mode_ || backprop_normalize_scale_ == 0.0) {
+    return;
+  }
+
+  // OK, we are not in test mode, and backprop_normalize_scale_ is nonzero.
+
+  // See comment above declaration of class in nnet-normalize-component.h
+  // for the math.
+  KALDI_ASSERT(memo != NULL && "memo not passed into backprop");
+  CuSubVector<BaseFloat> deriv_offset(memo->sum_offset_temp, 2);
+
+  // set deriv_offset to
+  // -  backprop_normalize_scale * (\sum_i \hat{y}_i) / n
+  deriv_offset.AddRowSumMat(
+      -backprop_normalize_scale_ / out_deriv.NumRows(),
+      out_deriv);
+
+  // We already copied out_deriv to in_deriv.
+  in_deriv->AddVecToRows(1.0, deriv_offset);
+}
+
+void MeanNormComponent::StoreStats(
+    const CuMatrixBase<BaseFloat> &in_value,
+    const CuMatrixBase<BaseFloat> &out_value,
+    void *memo_in) {
+  // in test mode this component does not store stats, it doesn't provide the
+  // kStoresStats flag.
+  KALDI_ASSERT(!test_mode_);
+  KALDI_ASSERT(out_value.NumCols() == dim_ || out_value.NumCols() == block_dim_);
+  if (out_value.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(out_value.Stride() == out_value.NumCols());
+    int32 ratio = dim_ / block_dim_,
+        orig_rows = out_value.NumRows(),
+        orig_cols = out_value.NumCols(),
+        new_rows = orig_rows * ratio, new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> out_value_reshaped(out_value.Data(), new_rows,
+                                              new_cols, new_cols);
+    // we'll never use in_value, so just pass it in unchanged.
+    StoreStats(in_value, out_value_reshaped, memo_in);
+    return;
+  }
+
+  Memo *memo = static_cast<Memo*>(memo_in);
+  KALDI_ASSERT(out_value.NumRows() == memo->num_frames);
+
+  CuSubVector<BaseFloat> sum(memo->sum_offset_temp, 0);
+  stats_sum_.AddVec(1.0, sum);
+  count_ += memo->num_frames;
+  KALDI_ASSERT(count_ > 0.0);
+  offset_.CopyFromVec(stats_sum_);
+  offset_.Scale(1.0 / count_);
+}
+
+void MeanNormComponent::Read(std::istream &is, bool binary) {
+  ExpectOneOrTwoTokens(is, binary, "<MeanNormComponent>", "<Dim>");
+  ReadBasicType(is, binary, &dim_);
+  ExpectToken(is, binary, "<BlockDim>");
+  ReadBasicType(is, binary, &block_dim_);
+  ExpectToken(is, binary, "<BackpropNormScale>");
+  ReadBasicType(is, binary, &backprop_normalize_scale_);
+  ExpectToken(is, binary, "<TestMode>");
+  ReadBasicType(is, binary, &test_mode_);
+  ExpectToken(is, binary, "<Count>");
+  ReadBasicType(is, binary, &count_);
+  // We write the mean, to make inspection of the on-disk format easier.
+  ExpectToken(is, binary, "<StatsMean>");
+  stats_sum_.Read(is, binary);
+  offset_ = stats_sum_;
+  stats_sum_.Scale(count_);
+  offset_.Scale(-1.0);
+  ExpectToken(is, binary, "</MeanNormComponent>");
+  Check();
+}
+
+void MeanNormComponent::Write(std::ostream &os, bool binary) const {
+  Check();
+  WriteToken(os, binary, "<MeanNormComponent>");
+  WriteToken(os, binary, "<Dim>");
+  WriteBasicType(os, binary, dim_);
+  WriteToken(os, binary, "<BlockDim>");
+  WriteBasicType(os, binary, block_dim_);
+  WriteToken(os, binary, "<BackpropNormScale>");
+  WriteBasicType(os, binary, backprop_normalize_scale_);
+  WriteToken(os, binary, "<TestMode>");
+  WriteBasicType(os, binary, test_mode_);
+  WriteToken(os, binary, "<Count>");
+  WriteBasicType(os, binary,  count_);
+  CuVector<BaseFloat> mean(stats_sum_);
+  if (count_ != 0) {
+    mean.Scale(1.0 / count_);
+  }
+  WriteToken(os, binary, "<StatsMean>");
+  mean.Write(os, binary);
+  WriteToken(os, binary, "</MeanNormComponent>");
+}
+
+void MeanNormComponent::Scale(BaseFloat scale) {
+  if (scale == 0) {
+    count_ = 0.0;
+    stats_sum_.SetZero();
+    offset_.SetZero();
+  } else {
+    count_ *= scale;
+    stats_sum_.Scale(scale);
+  }
+}
+
+
+void MeanNormComponent::Add(BaseFloat alpha, const Component &other_in) {
+  const MeanNormComponent *other =
+      dynamic_cast<const MeanNormComponent*>(&other_in);
+  count_ += alpha * other->count_;
+  stats_sum_.AddVec(alpha, other->stats_sum_);
+  if (count_ != 0.0) {
+    offset_.CopyFromVec(stats_sum_);
+    offset_.Scale(1.0 / count_);
+  }
+}
+
+VarNormComponent::VarNormComponent(const VarNormComponent &other):
+    dim_(other.dim_), block_dim_(other.block_dim_),
+    epsilon_(other.epsilon_), average_r_(other.average_r_),
+    test_mode_(other.test_mode_), count_(other.count_),
+    stats_sumsq_(other.stats_sumsq_), scale_(other.scale_),
+    r_count_(other.r_count_), r_sum_(other.r_sum_) { }
+
+void VarNormComponent::SetTestMode(bool test_mode) {
+  test_mode_ = test_mode;
+}
+
+void VarNormComponent::Check() const {
+  KALDI_ASSERT(dim_ > 0 && block_dim_ > 0 && dim_ % block_dim_ == 0 &&
+               epsilon_ > 0.0 &&
+               count_ >= 0 && r_count_ >= 0.0 &&
+               stats_sumsq_.Dim() == block_dim_ &&
+               scale_.Dim() == block_dim_ &&
+               r_sum_.Dim() == block_dim_);
+}
+
+std::string VarNormComponent::Info() const {
+  Check();
+  std::ostringstream stream;
+  stream << Type() << ", dim=" << dim_ << ", block-dim=" << block_dim_
+         << ", epsilon=" << epsilon_
+         << ", average-r=" << std::boolalpha << average_r_
+         << ", test-mode=" << (test_mode_ ? "true" : "false")
+         << ", count=" << count_
+         << ", scale=" << SummarizeVector(scale_)
+         << ", r-count=" << r_count_;
+  if (r_count_ != 0) {
+    CuVector<BaseFloat> r(r_sum_);
+    r.Scale(1.0 / r_count_);
+    stream << ", r=" << SummarizeVector(r);
+  }
+  return stream.str();
+}
+
+void VarNormComponent::InitFromConfig(ConfigLine *cfl) {
+  dim_ = -1;
+  block_dim_ = -1;
+  epsilon_ = 0.001;
+  test_mode_ = false;
+  average_r_ = false;
+  bool ok = cfl->GetValue("dim", &dim_);
+  cfl->GetValue("block-dim", &block_dim_);
+  cfl->GetValue("test-mode", &test_mode_);
+  cfl->GetValue("average-r", &average_r_);
+  cfl->GetValue("epsilon", &epsilon_);
+  if (!ok || dim_ <= 0) {
+    KALDI_ERR << "VarNormComponent must have 'dim' specified, and > 0";
+  }
+  if (block_dim_ == -1)
+    block_dim_ = dim_;
+  if (!(block_dim_ > 0 && dim_ % block_dim_ == 0))
+    KALDI_ERR << "Invalid configuration in VarNormComponent.";
+  if (cfl->HasUnusedValues())
+    KALDI_ERR << "Could not process these elements in initializer: "
+              << cfl->UnusedValues();
+  count_ = 0;
+  stats_sumsq_.Resize(block_dim_);
+  scale_.Resize(block_dim_, kUndefined);
+  scale_.Set(1.0);
+  r_count_ = 0.0;
+  r_sum_.Resize(block_dim_);
+  Check();
+}
+
+
+void* VarNormComponent::Propagate(const ComponentPrecomputedIndexes *indexes,
+                                  const CuMatrixBase<BaseFloat> &in,
+                                  CuMatrixBase<BaseFloat> *out) const {
+  KALDI_ASSERT(SameDim(in, *out) &&
+               (in.NumCols() == dim_ || in.NumCols() == block_dim_));
+  if (in.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(in.Stride() == in.NumCols() && out->Stride() == out->NumCols());
+    int32 ratio = dim_ / block_dim_, orig_rows = in.NumRows(),
+        orig_cols = in.NumCols(), new_rows = orig_rows * ratio,
+        new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> in_reshaped(in.Data(), new_rows, new_cols, new_cols),
+        out_reshaped(out->Data(), new_rows, new_cols, new_cols);
+    return Propagate(indexes, in_reshaped, &out_reshaped);
+  }
+
+  // From this point, we can assume that the num-cols of 'in' and 'out'
+  // equals block_dim_.
+  if (!test_mode_) {
+    Memo *memo = new Memo;
+    int32 num_frames = in.NumRows(), dim = block_dim_;
+    memo->num_frames = num_frames;
+    memo->sumsq_scale_temp.Resize(3, dim);
+    CuSubVector<BaseFloat> sumsq(memo->sumsq_scale_temp, 0),
+        scale(memo->sumsq_scale_temp, 1);
+    sumsq.AddDiagMat2(1.0, in, kTrans, 0.0);
+    scale.CopyFromVec(sumsq);
+    scale.AddVec(1.0, stats_sumsq_);
+    scale.Add((num_frames + count_) * epsilon_);
+    scale.Scale(1.0 / (num_frames + count_));
+    scale.ApplyPow(-0.5);
+    // the next command will do no work if out == in, for in-place propagation.
+    out->CopyFromMat(in);
+    out->MulColsVec(scale);
+    return static_cast<void*>(memo);
+  } else {
+    out->CopyFromMat(in);
+    out->MulColsVec(scale_);
+    return NULL;
+  }
+}
+
+void VarNormComponent::Backprop(
+    const std::string &debug_info,
+    const ComponentPrecomputedIndexes *indexes,
+    const CuMatrixBase<BaseFloat> &in_value,  // unused
+    const CuMatrixBase<BaseFloat> &out_value,
+    const CuMatrixBase<BaseFloat> &out_deriv,
+    void *memo_in,
+    Component *to_update_in,
+    CuMatrixBase<BaseFloat> *in_deriv) const {
+
+  KALDI_ASSERT(SameDim(out_value, out_deriv) &&
+               SameDim(out_value, *in_deriv) &&
+               (out_value.NumCols() == dim_ ||
+                out_value.NumCols() == block_dim_));
+  if (out_value.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(out_value.Stride() == out_value.NumCols() &&
+                 out_deriv.Stride() == out_deriv.NumCols() &&
+                 in_deriv->Stride() == in_deriv->NumCols());
+    int32 ratio = dim_ / block_dim_,
+        orig_rows = out_value.NumRows(),
+        orig_cols = out_value.NumCols(),
+        new_rows = orig_rows * ratio, new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> out_value_reshaped(out_value.Data(), new_rows,
+                                              new_cols, new_cols),
+        out_deriv_reshaped(out_deriv.Data(), new_rows, new_cols, new_cols),
+        in_deriv_reshaped(in_deriv->Data(), new_rows, new_cols, new_cols);
+    // we'll never use in_value, so pass it in unchanged.
+    Backprop(debug_info, indexes, in_value,
+             out_value_reshaped, out_deriv_reshaped,
+             memo_in, to_update_in, &in_deriv_reshaped);
+    return;
+  }
+
+
+  if (test_mode_) {
+    // the following statement does no work if in_deriv and out_deriv are the
+    // same matrix.
+    in_deriv->CopyFromMat(out_deriv);
+    in_deriv->MulColsVec(scale_);
+    return;
+  } else {
+    Memo *memo = static_cast<Memo*>(memo_in);
+    CuSubVector<BaseFloat> sumsq(memo->sumsq_scale_temp, 0),
+        scale(memo->sumsq_scale_temp, 1),
+        r_sum(memo->sumsq_scale_temp, 2);
+
+    // We're computing:
+    // r :=  scale * (\sum_{i=1}^n \hat{y}_i y_i)
+    // (the real r is this divided by n).
+    r_sum.AddDiagMatMat(1.0, out_deriv, kTrans, out_value, kNoTrans, 0.0);
+
+
+    if (average_r_) {
+      // 'to_update' is where we'll store stats related to 'r'
+      VarNormComponent *to_update = dynamic_cast<VarNormComponent*>(to_update_in);
+      to_update->r_sum_.AddVec(1.0, r_sum);
+      to_update->r_count_ += memo->num_frames;
+      r_sum.AddVec(1.0, this->r_sum_);
+      r_sum.MulElements(scale);
+      BaseFloat tot_count = this->r_count_ + memo->num_frames;
+      in_deriv->CopyFromMat(out_deriv);
+      in_deriv->MulColsVec(scale);
+      in_deriv->AddMatDiagVec(-1.0 / tot_count, out_value, kNoTrans, r_sum);
+    } else {
+      r_sum.MulElements(scale);
+      // the following statement does no work if in_deriv and out_deriv are the
+      // same matrix.
+      in_deriv->CopyFromMat(out_deriv);
+      in_deriv->MulColsVec(scale);
+      in_deriv->AddMatDiagVec(-1.0 / memo->num_frames, out_value, kNoTrans, r_sum);
+    }
+  }
+}
+
+
+void VarNormComponent::StoreStats(
+    const CuMatrixBase<BaseFloat> &in_value,
+    const CuMatrixBase<BaseFloat> &out_value,
+    void *memo_in) {
+  // in test mode this component does not store stats, it doesn't provide the
+  // kStoresStats flag.
+  KALDI_ASSERT(!test_mode_);
+  KALDI_ASSERT(out_value.NumCols() == dim_ || out_value.NumCols() == block_dim_);
+  if (out_value.NumCols() != block_dim_) {
+    // if block_dim_ != dim_, we recurse; this helps keep the main code
+    // simple.
+    KALDI_ASSERT(out_value.Stride() == out_value.NumCols());
+    int32 ratio = dim_ / block_dim_,
+        orig_rows = out_value.NumRows(),
+        orig_cols = out_value.NumCols(),
+        new_rows = orig_rows * ratio, new_cols = orig_cols / ratio;
+    CuSubMatrix<BaseFloat> out_value_reshaped(out_value.Data(), new_rows,
+                                              new_cols, new_cols);
+    // we'll never use in_value, so just pass it in unchanged.
+    StoreStats(in_value, out_value_reshaped, memo_in);
+    return;
+  }
+
+  Memo *memo = static_cast<Memo*>(memo_in);
+  KALDI_ASSERT(out_value.NumRows() == memo->num_frames);
+
+  CuSubVector<BaseFloat> sumsq(memo->sumsq_scale_temp, 0);
+  stats_sumsq_.AddVec(1.0, sumsq);
+  count_ += memo->num_frames;
+  KALDI_ASSERT(count_ > 0.0);
+  scale_.CopyFromVec(stats_sumsq_);
+  scale_.Add(count_ * epsilon_);
+  scale_.Scale(1.0 / count_);
+  scale_.ApplyPow(-0.5);
+}
+
+void VarNormComponent::Read(std::istream &is, bool binary) {
+  ExpectOneOrTwoTokens(is, binary, "<VarNormComponent>", "<Dim>");
+  ReadBasicType(is, binary, &dim_);
+  ExpectToken(is, binary, "<BlockDim>");
+  ReadBasicType(is, binary, &block_dim_);
+  ExpectToken(is, binary, "<Epsilon>");
+  ReadBasicType(is, binary, &epsilon_);
+  ExpectToken(is, binary, "<AverageR>");
+  ReadBasicType(is, binary, &average_r_);
+  ExpectToken(is, binary, "<TestMode>");
+  ReadBasicType(is, binary, &test_mode_);
+  ExpectToken(is, binary, "<Count>");
+  ReadBasicType(is, binary, &count_);
+  // We write the stats_sumsq divided by the count, to make inspection of the
+  // on-disk format easier.
+  ExpectToken(is, binary, "<Variance>");
+  stats_sumsq_.Read(is, binary);
+  scale_ = stats_sumsq_;
+  if (count_ != 0.0) {
+    scale_.Add(epsilon_);
+    scale_.ApplyPow(-0.5);
+  }
+  stats_sumsq_.Scale(count_);
+  ExpectToken(is, binary, "<RCount>");
+  ReadBasicType(is, binary, &r_count_);
+  ExpectToken(is, binary, "<RAvg>");
+  r_sum_.Read(is, binary);
+  r_sum_.Scale(r_count_);
+  ExpectToken(is, binary, "</VarNormComponent>");
+  Check();
+}
+
+void VarNormComponent::Write(std::ostream &os, bool binary) const {
+  Check();
+  WriteToken(os, binary, "<VarNormComponent>");
+  WriteToken(os, binary, "<Dim>");
+  WriteBasicType(os, binary, dim_);
+  WriteToken(os, binary, "<BlockDim>");
+  WriteBasicType(os, binary, block_dim_);
+  WriteToken(os, binary, "<Epsilon>");
+  WriteBasicType(os, binary, epsilon_);
+  WriteToken(os, binary, "<AverageR>");
+  WriteBasicType(os, binary, average_r_);
+  WriteToken(os, binary, "<TestMode>");
+  WriteBasicType(os, binary, test_mode_);
+  WriteToken(os, binary, "<Count>");
+  WriteBasicType(os, binary,  count_);
+  CuVector<BaseFloat> variance(stats_sumsq_);
+  if (count_ != 0) {
+    variance.Scale(1.0 / count_);
+  }
+  WriteToken(os, binary, "<Variance>");
+  variance.Write(os, binary);
+  WriteToken(os, binary, "<RCount>");
+  WriteBasicType(os, binary,  r_count_);
+  WriteToken(os, binary, "<RAvg>");
+  CuVector<BaseFloat> r_avg(r_sum_);
+  if (r_count_ != 0.0)
+    r_avg.Scale(1.0 / r_count_);
+  r_avg.Write(os, binary);
+  WriteToken(os, binary, "</VarNormComponent>");
+}
+
+void VarNormComponent::Scale(BaseFloat scale) {
+  if (scale == 0) {
+    count_ = 0.0;
+    stats_sumsq_.SetZero();
+    scale_.Set(1.0);
+    r_count_ = 0.0;
+    r_sum_.Set(0.0);
+  } else {
+    count_ *= scale;
+    stats_sumsq_.Scale(scale);
+    r_count_ *= scale;
+    r_sum_.Scale(scale);
+  }
+}
+
+
+void VarNormComponent::Add(BaseFloat alpha, const Component &other_in) {
+  const VarNormComponent *other =
+      dynamic_cast<const VarNormComponent*>(&other_in);
+  count_ += alpha * other->count_;
+  stats_sumsq_.AddVec(alpha, other->stats_sumsq_);
+  if (count_ != 0.0) {
+    scale_.CopyFromVec(stats_sumsq_);
+    scale_.Scale(1.0 / count_);
+    scale_.Add(epsilon_);
+    scale_.ApplyPow(-0.5);
+  } else {
+    scale_.Set(1.0);
+  }
+  r_count_ += alpha * other->r_count_;
+  r_sum_.AddVec(alpha, other->r_sum_);
+}
+
+
+
 } // namespace nnet3
 } // namespace kaldi
