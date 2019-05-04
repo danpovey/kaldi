@@ -66,7 +66,7 @@ double ComputeObjf(bool batchnorm_test_mode, bool dropout_test_mode,
 void UpdateNnetMovingAverage(int32 num_models,
     const Nnet &nnet, Nnet *moving_average_nnet) {
   KALDI_ASSERT(NumParameters(nnet) == NumParameters(*moving_average_nnet));
-  ScaleNnet((num_models - 1.0) / num_models, moving_average_nnet);
+  ScaleNnetForAverage((num_models - 1.0) / num_models, moving_average_nnet);
   AddNnet(nnet, 1.0 / num_models, moving_average_nnet);
 }
 
@@ -106,7 +106,7 @@ int main(int argc, char *argv[]) {
                 "if the number of models provided to this binary is quite "
                 "large (e.g. several hundred)."); 
     po.Register("batchnorm-test-mode", &batchnorm_test_mode,
-                "If true, set test-mode to true on any BatchNormComponents "
+                "If true, set test-mode to true on any BatchNormComponents or BatchRenormComponents"
                 "while evaluating objectives.");
     po.Register("dropout-test-mode", &dropout_test_mode,
                 "If true, set test-mode to true on any DropoutComponents and "

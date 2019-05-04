@@ -305,6 +305,22 @@ void ScaleNnet(BaseFloat scale, Nnet *nnet) {
   else {
     for (int32 c = 0; c < nnet->NumComponents(); c++) {
       Component *comp = nnet->GetComponent(c);
+      BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
+      if (bc != NULL) {
+        bc->Scale_Training(scale);
+      } else {
+        Component *comp = nnet->GetComponent(c);
+        comp->Scale(scale);
+      }
+    }
+  }
+}
+
+void ScaleNnetForAverage(BaseFloat scale, Nnet *nnet) {
+  if (scale == 1.0) return;
+  else {
+    for (int32 c = 0; c < nnet->NumComponents(); c++) {
+      Component *comp = nnet->GetComponent(c);
       comp->Scale(scale);
     }
   }
@@ -520,6 +536,9 @@ bool HasBatchnorm(const Nnet &nnet) {
     const Component *comp = nnet.GetComponent(c);
     if (dynamic_cast<const BatchNormComponent*>(comp) != NULL)
       return true;
+    comp = nnet.GetComponent(c);
+    if (dynamic_cast<const BatchRenormComponent*>(comp) != NULL)
+      return true;
   }
   return false;
 }
@@ -532,8 +551,15 @@ void ScaleBatchnormStats(BaseFloat batchnorm_stats_scale,
   for (int32 c = 0; c < nnet->NumComponents(); c++) {
     Component *comp = nnet->GetComponent(c);
     BatchNormComponent *bc = dynamic_cast<BatchNormComponent*>(comp);
-    if (bc != NULL)
+    if (bc != NULL) {
       bc->Scale(batchnorm_stats_scale);
+    } else {
+      comp = nnet->GetComponent(c);
+      BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
+      if (bc != NULL) {
+        bc->Scale_Training(batchnorm_stats_scale);
+      }
+    }
   }
 }
 
@@ -556,8 +582,15 @@ void SetBatchnormTestMode(bool test_mode,  Nnet *nnet) {
   for (int32 c = 0; c < nnet->NumComponents(); c++) {
     Component *comp = nnet->GetComponent(c);
     BatchNormComponent *bc = dynamic_cast<BatchNormComponent*>(comp);
-    if (bc != NULL)
+    if (bc != NULL) {
       bc->SetTestMode(test_mode);
+    } else {
+      comp = nnet->GetComponent(c);
+      BatchRenormComponent *bc = dynamic_cast<BatchRenormComponent*>(comp);
+      if (bc != NULL) {
+        bc->SetTestMode(test_mode);
+      }
+    }
   }
 }
 
@@ -1641,18 +1674,32 @@ class ModelCollapser {
     const BatchNormComponent *batchnorm_component =
         dynamic_cast<const BatchNormComponent*>(
             nnet_->GetComponent(component_index1));
-    if (batchnorm_component == NULL)
+    const BatchRenormComponent *batchrenorm_component =
+      dynamic_cast<const BatchRenormComponent*>(
+          nnet_->GetComponent(component_index1));
+    if (batchnorm_component != NULL && batchrenorm_component != NULL) {
+      KALDI_ERR << "Something seems very wrong, a component belongs to both batch-norm and batch-renorm ?";
+    } else if (batchnorm_component == NULL && batchrenorm_component == NULL) {
       return -1;
-
-    if (batchnorm_component->Offset().Dim() == 0) {
-      KALDI_ERR << "Expected batch-norm components to have test-mode set.";
+    } else if (batchnorm_component != NULL) {
+      if (batchnorm_component->Offset().Dim() == 0) {
+        KALDI_ERR << "Expected batch-norm components to have test-mode set.";
+      }
+      std::string batchnorm_component_name = nnet_->GetComponentName(component_index1);
+      return GetDiagonallyPreModifiedComponentIndex(batchnorm_component->Offset(),
+                                                    batchnorm_component->Scale(),
+                                                    batchnorm_component_name,
+                                                    component_index2);
+    } else {
+      if (batchrenorm_component->Offset().Dim() == 0) {
+        KALDI_ERR << "Expected batch-norm components to have test-mode set.";
+      }
+      std::string batchrenorm_component_name = nnet_->GetComponentName(component_index1);
+      return GetDiagonallyPreModifiedComponentIndex(batchrenorm_component->Offset(),
+                                                    batchrenorm_component->Scale(),
+                                                    batchrenorm_component_name,
+                                                    component_index2);
     }
-    std::string batchnorm_component_name = nnet_->GetComponentName(
-        component_index1);
-    return GetDiagonallyPreModifiedComponentIndex(batchnorm_component->Offset(),
-                                                  batchnorm_component->Scale(),
-                                                  batchnorm_component_name,
-                                                  component_index2);
   }
 
 
