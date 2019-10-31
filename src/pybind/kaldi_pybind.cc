@@ -110,6 +110,13 @@ PYBIND11_MODULE(kaldi_pybind, m) {
           MatrixResizeType, MatrixStrideType>(),
           py::arg("row"), py::arg("col"), py::arg("resize_type") = kSetZero,
           py::arg("stride_type") = kDefaultStride);
+<<<<<<< HEAD
+=======
+}
+
+
+
+>>>>>>> 95fb25f9213c7bef3d5f30aa36f70e1d7006559d
 
 
   sequential_matrix_reader<KaldiObjectHolder<Matrix<float>>>(m, "_Matrix");
