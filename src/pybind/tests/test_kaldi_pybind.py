@@ -45,7 +45,7 @@ class TestKaldiPybind(unittest.TestCase):
         rspecifier = "ark:test.ark"
         matrix_writer = kp.BaseFloatMatrixWriter_Matrix(wspecifier)
         print("Write id: 'id_1'")
-        print("Write matrxi: [0 0 0; 0 0 0]")
+        print("Write matrix: [0 0 0; 0 0 0]")
         matrix_writer.Write("id_1", kp_matrix)
         matrix_writer.Close()
 
