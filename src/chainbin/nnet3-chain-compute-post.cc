@@ -201,16 +201,11 @@ int main(int argc, char *argv[]) {
       // swap.
       CuMatrix<BaseFloat> gpu_nnet_output;
       gpu_nnet_output.Swap(&matrix);
-      bool all_boundary = (RandInt(0, 1) == 0);
-      KALDI_LOG << "All-boundary = " << std::boolalpha << all_boundary;
+
       Matrix<BaseFloat> boundary_mask(4, 1);
-      if (all_boundary) {
-        boundary_mask.Row(0).Set(1.0);
-        boundary_mask.Row(2).Set(1.0);
-      } else { // all not-boundary, i.e. all split-point.
-        boundary_mask.Row(1).Set(1.0);
-        boundary_mask.Row(3).Set(1.0);
-      }
+      // always is real boundary
+      boundary_mask.Row(0).Set(1.0);
+      boundary_mask.Row(2).Set(1.0);
 
 
       chain::DenominatorComputation den_computation(
