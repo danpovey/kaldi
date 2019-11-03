@@ -737,7 +737,8 @@ Supervision::Supervision(const Supervision &other):
     weight(other.weight), num_sequences(other.num_sequences),
     frames_per_sequence(other.frames_per_sequence),
     label_dim(other.label_dim), fst(other.fst),
-    e2e_fsts(other.e2e_fsts), alignment_pdfs(other.alignment_pdfs) { }
+    e2e_fsts(other.e2e_fsts), alignment_pdfs(other.alignment_pdfs),
+    real_starts(other.real_starts), real_ends(other.real_ends) { }
 
 
 // This static function is called by MergeSupervision if the supervisions
@@ -947,7 +948,9 @@ void SplitIntoRanges(int32 num_frames,
 bool Supervision::operator == (const Supervision &other) const {
   return weight == other.weight && num_sequences == other.num_sequences &&
       frames_per_sequence == other.frames_per_sequence &&
-      label_dim == other.label_dim && fst::Equal(fst, other.fst);
+      label_dim == other.label_dim &&
+      real_starts == other.real_starts && real_ends == other.real_ends &&
+      fst::Equal(fst, other.fst);
 }
 
 void Supervision::Check(const TransitionModel &trans_mdl) const {
