@@ -6,6 +6,7 @@ import sys
 # Add .. to the PYTHONPATH
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 import kaldi_pybind as kp
+import kaldi
 
 class TestKaldiPybind(unittest.TestCase):
     def test_float_vector(self):
@@ -52,6 +53,21 @@ class TestKaldiPybind(unittest.TestCase):
         matrix_reader = kp.SequentialBaseFloatMatrixReader_Matrix(rspecifier)
         print("Read id: {}".format(matrix_reader.Key()))
         print("Read matrix: {}".format(matrix_reader.Value()))
+
+    def test_matrix_reader_iterator(self):
+        print("=====Testing Matrix Reader Iterator=====")
+        kp_matrix = kp.FloatMatrix(2,3)
+        wspecifier = "ark,t:test.ark"
+        rspecifier = "ark:test.ark"
+        matrix_writer = kp.BaseFloatMatrixWriter_Matrix(wspecifier)
+        print("Write id: 'id_1'")
+        print("Write matrix: [0 0 0; 0 0 0]")
+        matrix_writer.Write("id_1", kp_matrix)
+        matrix_writer.Close()
+
+        for key, value in kaldi.ReaderIterator(kaldi.SequentialMatrixReader(rspecifier)):
+            print(key, value)
+        
 
 
 if __name__ == '__main__':
