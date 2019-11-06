@@ -287,6 +287,10 @@ bool TrainingGraphToSupervisionE2e(
   supervision->num_sequences = 1;
   supervision->frames_per_sequence = num_frames;
   supervision->label_dim = trans_model.NumPdfs();
+  supervision->real_starts.resize(1);
+  supervision->real_starts[0] = true;
+  supervision->real_ends.resize(1);
+  supervision->real_ends[0] = true;
   return true;
 }
 
