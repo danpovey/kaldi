@@ -27,9 +27,9 @@ namespace py = pybind11;
 using namespace kaldi;
 
 template<class Holder>
-void sequential_matrix_reader(py::module &m, std::string data_type) {
+void sequential_matrix_reader(py::module &m, const std::string &data_type) {
     std::string name = "SequentialBaseFloat" + data_type + "Reader";
-    py::class_<SequentialTableReader<Holder > >(m, name.c_str())
+    py::class_<SequentialTableReader<Holder>>(m, name.c_str())
         .def(py::init<>()) 
         .def(py::init<const std::string &>()) 
         .def("Open", &SequentialTableReader<Holder>::Open) 
@@ -43,9 +43,9 @@ void sequential_matrix_reader(py::module &m, std::string data_type) {
 }
 
 template<class Holder>
-void random_access_matrix_reader(py::module &m, std::string data_type) {
+void random_access_matrix_reader(py::module &m, const std::string &data_type) {
     std::string name = "RandomAccessBaseFloat" + data_type + "Reader";
-    py::class_<RandomAccessTableReader<Holder > >(m, name.c_str())
+    py::class_<RandomAccessTableReader<Holder>>(m, name.c_str())
         .def(py::init<>()) 
         .def(py::init<const std::string &>()) 
         .def("Open", &RandomAccessTableReader<Holder>::Open) 
@@ -56,7 +56,7 @@ void random_access_matrix_reader(py::module &m, std::string data_type) {
 }
 
 template<class Holder>
-void matrix_writer(py::module &m, std::string data_type) {
+void matrix_writer(py::module &m, const std::string &data_type) {
   std::string name = "BaseFloat" + data_type + "Writer";
   py::class_<TableWriter<Holder > >(m, name.c_str())
       .def(py::init<const std::string &>())

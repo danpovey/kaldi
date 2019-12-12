@@ -1,7 +1,10 @@
+# Copyright 2019    Dongji Gao
+# Apache 2.0.
+
 import kaldi_pybind as kp
 
 class SequentialVectorReader(kp.SequentialBaseFloatVectorReader):
-    def __init__(self, rspecifier = None):
+    def __init__(self, rspecifier=None):
         if not rspecifier:
             kp.SequentialBaseFloatVectorReader.__init__(self)      
         else:
@@ -19,7 +22,7 @@ class SequentialVectorReader(kp.SequentialBaseFloatVectorReader):
             return key, value
 
 class SequentialMatrixReader(kp.SequentialBaseFloatMatrixReader):
-    def __init__(self, rspecifier = None):
+    def __init__(self, rspecifier=None):
         if not rspecifier:
             kp.SequentialBaseFloatMatrixReader.__init__(self)      
         else:
@@ -47,7 +50,7 @@ class ReaderIterator():
         return self.iterator.__next__()
 
 class RandomAccessVectorReader(kp.RandomAccessBaseFloatVectorReader):
-    def __init__(self, rspecifier = None):
+    def __init__(self, rspecifier=None):
         if not rspecifier:
             kp.RandomAccessBaseFloatVectorReader.__init__(self)      
         else:
@@ -63,7 +66,7 @@ class RandomAccessVectorReader(kp.RandomAccessBaseFloatVectorReader):
         return self.HasKey(key)
 
 class RandomAccessMatrixReader(kp.RandomAccessBaseFloatMatrixReader):
-    def __init__(self, rspecifier = None):
+    def __init__(self, rspecifier=None):
         if not rspecifier:
             kp.RandomAccessBaseFloatMatrixReader.__init__(self)      
         else:
