@@ -58,7 +58,7 @@ void random_access_matrix_reader(py::module &m, const std::string &data_type) {
 template<class Holder>
 void matrix_writer(py::module &m, const std::string &data_type) {
   std::string name = "BaseFloat" + data_type + "Writer";
-  py::class_<TableWriter<Holder > >(m, name.c_str())
+  py::class_<TableWriter<Holder>>(m, name.c_str())
       .def(py::init<const std::string &>())
       .def("IsOpen", &TableWriter<Holder>::IsOpen)
       .def("Open", &TableWriter<Holder>::Open)    
