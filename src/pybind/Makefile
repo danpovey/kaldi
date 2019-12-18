@@ -37,12 +37,13 @@ endif
 CCFILES = kaldi_pybind.cc \
           matrix/matrix_common_pybind.cc matrix/matrix_pybind.cc \
           matrix/vector_pybind.cc \
-          util/table_types_pybind.cc
+          util/table_types_pybind.cc \
+          feat/wave_reader_pybind.cc
 
 LIBNAME = kaldi_pybind
 
 
-ADDLIBS = ../util/kaldi-util.a ../matrix/kaldi-matrix.a ../base/kaldi-base.a
+ADDLIBS = ../util/kaldi-util.a ../matrix/kaldi-matrix.a ../base/kaldi-base.a ../feat/kaldi-feat.a
 
 EXTRA_LDLIBS += $(foreach dep,$(ADDLIBS), $(dir $(dep))lib$(notdir $(basename $(dep))).so)
 
