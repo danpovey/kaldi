@@ -28,7 +28,7 @@ class TestKaldiPybind(unittest.TestCase):
         gold = np.array([0, 0, 2, 2, 2])
         self.assertTrue((np_array==gold).all())
 
-    def test_float_matrxi(self):
+    def test_float_matrix(self):
         # test FloatMatrix
         print("=====Testing FloatVector in kaldi_pybind=====")
         kp_matrix = kp.FloatMatrix(4,5)
