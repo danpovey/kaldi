@@ -30,7 +30,7 @@ class TestKaldiPybind(unittest.TestCase):
 
     def test_float_matrix(self):
         # test FloatMatrix
-        print("=====Testing FloatVector in kaldi_pybind=====")
+        print("=====Testing FloatMatrix in kaldi_pybind=====")
         kp_matrix = kp.FloatMatrix(4,5)
         print("kp_matrix = kp.FloatMatrix(4,5)")
         print(kp_matrix)
