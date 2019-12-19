@@ -34,20 +34,30 @@ ifeq ($(shell uname),Darwin)
   LDFLAGS += -undefined dynamic_lookup
 endif
 
+# TODO(fangjun): split it to multiple libxxx.a to avoid recompilation
 CCFILES = kaldi_pybind.cc \
           matrix/matrix_common_pybind.cc matrix/matrix_pybind.cc \
           matrix/vector_pybind.cc \
           util/table_types_pybind.cc \
-          feat/wave_reader_pybind.cc
+          feat/wave_reader_pybind.cc \
+          fstext/kaldi_fst_io_pybind.cc \
+          fst/fst_pybind.cc fst/weight_pybind.cc fst/arc_pybind.cc \
+          fst/symbol_table_pybind.cc fst/vector_fst_pybind.cc \
+          fst/compile_pybind.cc
 
 LIBNAME = kaldi_pybind
 
 
-ADDLIBS = ../util/kaldi-util.a ../matrix/kaldi-matrix.a ../base/kaldi-base.a ../feat/kaldi-feat.a
+ADDLIBS = ../util/kaldi-util.a ../matrix/kaldi-matrix.a ../base/kaldi-base.a ../fstext/kaldi-fstext.a ../feat/kaldi-feat.a
+
 
 EXTRA_LDLIBS += $(foreach dep,$(ADDLIBS), $(dir $(dep))lib$(notdir $(basename $(dep))).so)
+EXTRA_LDLIBS += ../../tools/openfst/lib/libfstscript.so
+
+LDFLAGS += -Wl,-rpath=$(CURDIR)/../../tools/openfst/lib
 
 LIBFILE=$(LIBNAME)$(LIBFILE_EXTENSION)
+
 
 .PHONY: all clean test
 
@@ -65,6 +75,7 @@ test: all
 	python3 tests/test_kaldi_pybind.py
 	python3 tests/test_matrix.py
 	python3 tests/test_wave.py
+	make -C fst test
 
 # valgrind-python.supp is from http://svn.python.org/projects/python/trunk/Misc/valgrind-python.supp
 # since we do not compile Python from souce, we follow the comment in valgrind-python.supp
