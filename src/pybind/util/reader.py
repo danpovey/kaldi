@@ -57,6 +57,24 @@ class SequentialWaveReader(kp.SequentialWaveReader):
             self.Next()
             return key, value
 
+class SequentialWaveInfoReader(kp.SequentialWaveInfoReader):
+    def __init__(self, rspecifier=None):
+        if not rspecifier:
+            kp.SequentialWaveInfoReader.__init__(self)
+        else:
+            kp.SequentialWaveInfoReader.__init__(self, rspecifier)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.Done():
+            raise StopIteration()
+        else:
+            key, value = self.Key(), self.Value()
+            self.Next()
+            return key, value
+
 class ReaderIterator():
     def __init__(self, reader_class):
         self.iterator = reader_class
@@ -105,6 +123,22 @@ class RandomAccessWaveReader(kp.RandomAccessWaveReader):
             kp.RandomAccessWaveReader.__init__(self)
         else:
             kp.RandomAccessWaveReader.__init__(self, rspecifier)
+
+    def __getitem__(self, key):
+        if not self.HasKey(key):
+            raise KeyError("{} does not exits.".format(key))
+        else:
+            return self.Value(key)
+
+    def __contains__(self, key):
+        return self.HasKey(key)
+
+class RandomAccessWaveInfoReader(kp.RandomAccessWaveInfoReader):
+    def __init__(self, rspecifier=None):
+        if not rspecifier:
+            kp.RandomAccessWaveInfoReader.__init__(self)
+        else:
+            kp.RandomAccessWaveInfoReader.__init__(self, rspecifier)
 
     def __getitem__(self, key):
         if not self.HasKey(key):
