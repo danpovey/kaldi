@@ -34,7 +34,6 @@ ifeq ($(shell uname),Darwin)
   LDFLAGS += -undefined dynamic_lookup
 endif
 
-# TODO(fangjun): split it to multiple libxxx.a to avoid recompilation
 CCFILES = kaldi_pybind.cc \
           matrix/matrix_common_pybind.cc matrix/matrix_pybind.cc \
           matrix/vector_pybind.cc \
@@ -44,6 +43,8 @@ CCFILES = kaldi_pybind.cc \
           fst/fst_pybind.cc fst/weight_pybind.cc fst/arc_pybind.cc \
           fst/symbol_table_pybind.cc fst/vector_fst_pybind.cc \
           fst/compile_pybind.cc
+
+CCFILES_OBJS := $(CCFILES:%.cc=%.o)
 
 LIBNAME = kaldi_pybind
 
@@ -63,13 +64,17 @@ LIBFILE=$(LIBNAME)$(LIBFILE_EXTENSION)
 
 all: $(LIBFILE)
 
-$(LIBFILE): $(ADDLIBS) $(CCFILES)
-	$(CXX) $(CXXFLAGS) -shared -o $@ $(CCFILES) -Wl,--no-whole-archive -Wl,-rpath=$(CURDIR)/../lib $(LDFLAGS) $(LDLIBS) $(EXTRA_LDLIBS)
+%.o: %.cc
+	$(CXX) -c $(CXXFLAGS) -o $@ $^
+
+$(LIBFILE): $(ADDLIBS) $(CCFILES_OBJS)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $(CCFILES_OBJS) -Wl,--no-whole-archive -Wl,-rpath=$(CURDIR)/../lib $(LDFLAGS) $(LDLIBS) $(EXTRA_LDLIBS)
 	python3 -c 'import kaldi_pybind'  # this line is a test.
 
 clean:
 	-rm -f *.so
 	-rm -rf __pycache__
+	-rm $(CCFILES_OBJS)
 
 test: all
 	python3 tests/test_kaldi_pybind.py

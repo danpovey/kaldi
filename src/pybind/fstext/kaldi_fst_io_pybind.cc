@@ -80,7 +80,7 @@ void pybind_kaldi_fst_io(py::module& m) {
         py::arg("rxfilename"), py::return_value_policy::reference);
 
   {
-    // fangjun: it should called StdVectorFstHolder to match the naming
+    // fangjun: it should be called StdVectorFstHolder to match the naming
     // convention in OpenFst but kaldi uses only StdArc so there is no confusion
     // here.
     using PyClass = fst::VectorFstHolder;
