@@ -1,12 +1,12 @@
-// pybind/kaldi_pybind.h
+// pybind/chain/chain_pybind.cc
 
-// Copyright 2019   Daniel Povey
-//           2019   Dongji Gao
-//           2019   Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
-//
-// See ../../COPYING for clarification regarding multiple authors
+// Copyright 2019   Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
+
+// See ../../../COPYING for clarification regarding multiple authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
 //  http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -17,13 +17,12 @@
 // See the Apache 2 License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef KALDI_PYBIND_KALDI_PYBIND_H_
-#define KALDI_PYBIND_KALDI_PYBIND_H_
+#include "chain/chain_pybind.h"
 
-#include <pybind11/operators.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include "chain/chain_supervision_pybind.h"
 
-namespace py = pybind11;
+void pybind_chain(py::module& _m) {
+  py::module m = _m.def_submodule("chain", "chain pybind for Kaldi");
 
-#endif  // KALDI_PYBIND_KALDI_PYBIND_H_
+  pybind_chain_supervision(m);
+}

@@ -29,6 +29,9 @@
 
 #include "fst/fst_pybind.h"
 
+#include "chain/chain_pybind.h"
+#include "nnet3/nnet3_pybind.h"
+
 PYBIND11_MODULE(kaldi_pybind, m) {
   m.doc() =
       "pybind11 binding of some things from kaldi's "
@@ -42,4 +45,6 @@ PYBIND11_MODULE(kaldi_pybind, m) {
   pybind_wave_reader(m);
 
   pybind_fst(m);
+  pybind_chain(m);
+  pybind_nnet3(m);
 }
