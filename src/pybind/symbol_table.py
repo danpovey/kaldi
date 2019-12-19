@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2019 Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
 # Apache 2.0
 

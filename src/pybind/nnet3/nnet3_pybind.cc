@@ -1,6 +1,7 @@
 // pybind/nnet3/nnet3_pybind.cc
 
-// Copyright 2019   Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
+// Copyright 2019   Mobvoi AI Lab, Beijing, China
+//                  (author: Fangjun Kuang, Yaguang Hu, Jian Wang)
 
 // See ../../../COPYING for clarification regarding multiple authors
 //

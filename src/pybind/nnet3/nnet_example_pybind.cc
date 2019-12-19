@@ -1,6 +1,7 @@
 // pybind/nnet3/nnet_example_pybind.cc
 
-// Copyright 2019   Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
+// Copyright 2019   Mobvoi AI Lab, Beijing, China
+//                  (author: Fangjun Kuang, Yaguang Hu, Jian Wang)
 
 // See ../../../COPYING for clarification regarding multiple authors
 //
@@ -27,7 +28,11 @@ using namespace kaldi::nnet3;
 void pybind_nnet_example(py::module& m) {
   {
     using PyClass = NnetIo;
-    py::class_<PyClass>(m, "NnetIo").def(py::init<>());
+    py::class_<PyClass>(m, "NnetIo")
+        .def(py::init<>())
+        .def_readwrite("name", &PyClass::name,
+                       "the name of the input in the neural net; in simple "
+                       "setups it will just be 'input'.");
     // TODO(fangjun): other constructors, fields and methods can be wrapped when
   }
 }

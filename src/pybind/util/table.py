@@ -66,6 +66,10 @@ class _SequentialReaderBase(object):
             key = self.Key()
             value = self.Value()
             self.Next()
+            # WARNING(fangjun): after calling self.Next(), the `value`
+            # returned above is invalidated, so we use copy semantics
+            # in the C++ binding code. But if the user does not the pythonic
+            # way for iteration, the extra copy in the C++ binding code is unncessary.
             yield key, value
 
     def Open(self, rspecifier):
@@ -185,7 +189,7 @@ class _RandomAccessReaderBase(object):
             """
         super(_RandomAccessReaderBase, self).__init__()
         if rspecifier != "":
-            if not self.open(rspecifier):
+            if not self.Open(rspecifier):
                 raise IOError("Error opening random access table reader with "
                               "rspecifier: {}".format(rspecifier))
 
@@ -193,15 +197,15 @@ class _RandomAccessReaderBase(object):
         return self
 
     def __contains__(self, key):
-        return self.has_key(key)
+        return self.HasKey(key)
 
     def __getitem__(self, key):
-        if self.has_key(key):
-            return self.value(key)
+        if self.HasKey(key):
+            return self.Value(key)
         else:
             raise KeyError(key)
 
-    def open(self, rspecifier):
+    def Open(self, rspecifier):
         """Opens the table for reading.
 
             Args:
@@ -214,9 +218,9 @@ class _RandomAccessReaderBase(object):
             Raises:
                 IOError: If opening the table for reading fails.
             """
-        return super(_RandomAccessReaderBase, self).open(rspecifier)
+        return super(_RandomAccessReaderBase, self).Open(rspecifier)
 
-    def has_key(self, key):
+    def HasKey(self, key):
         """Checks whether the table has the key.
 
             This method is provided for compatibility with the C++ API only;
@@ -228,9 +232,9 @@ class _RandomAccessReaderBase(object):
             Returns:
               True if the table has the key, False otherwise.
             """
-        return super(_RandomAccessReaderBase, self).has_key(key)
+        return super(_RandomAccessReaderBase, self).HasKey(key)
 
-    def value(self, key):
+    def Value(self, key):
         """Returns the value associated with the key.
 
             This method is provided for compatibility with the C++ API only;
@@ -242,9 +246,9 @@ class _RandomAccessReaderBase(object):
             Returns:
                 The value associated with the key.
             """
-        return super(_RandomAccessReaderBase, self).value(key)
+        return super(_RandomAccessReaderBase, self).Value(key)
 
-    def is_open(self):
+    def IsOpen(self):
         """Indicates whether the table reader is open or not.
 
             This method is provided for compatibility with the C++ API only;
@@ -253,9 +257,9 @@ class _RandomAccessReaderBase(object):
             Returns:
               True if the table reader is open, False otherwise.
             """
-        return super(_RandomAccessReaderBase, self).is_open()
+        return super(_RandomAccessReaderBase, self).IsOpen()
 
-    def close(self):
+    def Close(self):
         """Closes the table.
 
             This method is provided for compatibility with the C++ API only;
@@ -264,7 +268,7 @@ class _RandomAccessReaderBase(object):
             Returns:
                 True if table is closed successfully, False otherwise.
             """
-        return super(_RandomAccessReaderBase, self).close()
+        return super(_RandomAccessReaderBase, self).Close()
 
 
 class RandomAccessNnetChainExampleReader(_RandomAccessReaderBase,
@@ -298,7 +302,7 @@ class _WriterBase(object):
             """
         super(_WriterBase, self).__init__()
         if wspecifier != "":
-            if not self.open(wspecifier):
+            if not self.Open(wspecifier):
                 raise IOError(
                     "Error opening table writer with wspecifier: {}".format(
                         wspecifier))
@@ -307,9 +311,9 @@ class _WriterBase(object):
         return self
 
     def __setitem__(self, key, value):
-        self.write(key, value)
+        self.Write(key, value)
 
-    def open(self, wspecifier):
+    def Open(self, wspecifier):
         """Opens the table for writing.
 
             Args:
@@ -322,13 +326,13 @@ class _WriterBase(object):
             Raises:
                 IOError: If opening the table for writing fails.
             """
-        return super(_WriterBase, self).open(wspecifier)
+        return super(_WriterBase, self).Open(wspecifier)
 
-    def flush(self):
+    def Flush(self):
         """Flushes the table contents to disk/pipe."""
-        super(_WriterBase, self).flush()
+        super(_WriterBase, self).Flush()
 
-    def write(self, key, value):
+    def Write(self, key, value):
         """Writes the `(key, value)` pair to the table.
 
             This method is provided for compatibility with the C++ API only;
@@ -338,9 +342,9 @@ class _WriterBase(object):
                 key (str): The key.
                 value: The value.
             """
-        super(_WriterBase, self).write(key, value)
+        super(_WriterBase, self).Write(key, value)
 
-    def is_open(self):
+    def IsOpen(self):
         """Indicates whether the table writer is open or not.
 
             This method is provided for compatibility with the C++ API only;
@@ -349,9 +353,9 @@ class _WriterBase(object):
             Returns:
               True if the table writer is open, False otherwise.
             """
-        return super(_WriterBase, self).is_open()
+        return super(_WriterBase, self).IsOpen()
 
-    def close(self):
+    def Close(self):
         """Closes the table.
 
             This method is provided for compatibility with the C++ API only;
@@ -360,7 +364,7 @@ class _WriterBase(object):
             Returns:
                 True if table is closed successfully, False otherwise.
             """
-        return super(_WriterBase, self).close()
+        return super(_WriterBase, self).Close()
 
 
 class NnetChainExampleWriter(_WriterBase, _NnetChainExampleWriter):

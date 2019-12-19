@@ -1,6 +1,7 @@
 // pybind/chain/chain_supervision_pybind.cc
 
-// Copyright 2019   Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
+// Copyright 2019   Mobvoi AI Lab, Beijing, China
+//                  (author: Fangjun Kuang, Yaguang Hu, Jian Wang)
 
 // See ../../../COPYING for clarification regarding multiple authors
 //

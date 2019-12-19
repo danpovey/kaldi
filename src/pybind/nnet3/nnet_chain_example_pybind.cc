@@ -1,6 +1,7 @@
 // pybind/nnet3/nnet_chain_example_pybind.cc
 
-// Copyright 2019   Mobvoi AI Lab, Beijing, China (author: Fangjun Kuang)
+// Copyright 2019   Mobvoi AI Lab, Beijing, China
+//                  (author: Fangjun Kuang, Yaguang Hu, Jian Wang)
 
 // See ../../../COPYING for clarification regarding multiple authors
 //
@@ -75,6 +76,12 @@ void pybind_nnet_chain_example(py::module& m) {
             "equivalent to a vector of all ones.  This vector is written to "
             "disk compactly as unsigned char.")
         .def("CheckDim", &PyClass::CheckDim)
+        .def("__str__",
+             [](const PyClass& sup) {
+               std::ostringstream os;
+               os << "name: " << sup.name << "\n";
+               return os.str();
+             })
         // TODO(fangjun): other methods can be wrapped when needed
         ;
   }

@@ -9,10 +9,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
 import unittest
 
-from kaldi import SequentialNnetChainExampleReader
-from kaldi import RandomAccessNnetChainExampleReader
-from kaldi import NnetChainExampleWriter
+import kaldi_pybind
+
+import kaldi_pybind.chain as chain
 import kaldi_pybind.nnet3 as nnet3
+from kaldi import NnetChainExampleWriter
+from kaldi import RandomAccessNnetChainExampleReader
+from kaldi import SequentialNnetChainExampleReader
+from kaldi_pybind.fst import StdVectorFst
 
 
 class TestNnetChainExample(unittest.TestCase):
@@ -23,16 +27,39 @@ class TestNnetChainExample(unittest.TestCase):
         egs_rspecifier = 'scp:./aishell_test.scp'
         reader = SequentialNnetChainExampleReader(egs_rspecifier)
         for key, value in reader:
-            # TODO(fangjun: fix "RuntimeError: Could not allocate list object"
-            # print(value.inputs)
+            inputs = value.inputs
+            self.assertEqual(len(inputs), 1)
+
+            nnet_io = inputs[0]
+            self.assertTrue(isinstance(nnet_io, nnet3.NnetIo))
+            self.assertEqual(nnet_io.name, 'input')
+            # its `features` has not been wrapped yet.
+
             self.assertTrue(isinstance(key, str))
             self.assertTrue(isinstance(value, nnet3.NnetChainExample))
             outputs = value.outputs
             num_outputs = len(outputs)
             self.assertEqual(num_outputs, 1)
 
-            sup = outputs[0]
-            self.assertTrue(isinstance(sup, nnet3.NnetChainSupervision))
+            nnet_chain_sup = outputs[0]
+            self.assertTrue(
+                isinstance(nnet_chain_sup, nnet3.NnetChainSupervision))
+            self.assertEqual(nnet_chain_sup.name, 'output')
+
+            sup = nnet_chain_sup.supervision
+            self.assertTrue(isinstance(sup, chain.Supervision))
+            weight = sup.weight
+            self.assertEqual(sup.weight, 1)
+            self.assertEqual(sup.num_sequences, 1)
+            # we have to egs in the ark, with 30 and 50 frames per sequence respectively
+            self.assertTrue(sup.frames_per_sequence == 30 or
+                            sup.frames_per_sequence == 50)
+            self.assertEqual(sup.label_dim, 4336)
+
+            # now comes to the FST part !!!
+            fst = sup.fst
+            self.assertTrue(isinstance(sup.fst, StdVectorFst))
+            # see pybind/fst/vector_fst_pybind_test.py for operations wrapped for fst::StdVectorFst
             # TODO(fangjun): finish the test
 
 
