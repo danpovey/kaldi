@@ -64,6 +64,7 @@ clean:
 test: all
 	python3 tests/test_kaldi_pybind.py
 	python3 tests/test_matrix.py
+        python3 tests/test_wave.py
 
 # valgrind-python.supp is from http://svn.python.org/projects/python/trunk/Misc/valgrind-python.supp
 # since we do not compile Python from souce, we follow the comment in valgrind-python.supp

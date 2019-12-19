@@ -2,7 +2,7 @@
 
 // Copyright 2019   Microsoft Corporation (author: Xingyu Na)
 
-// See ../../COPYING for clarification regarding multiple authors
+// See ../../../COPYING for clarification regarding multiple authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 //
