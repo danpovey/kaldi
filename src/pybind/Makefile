@@ -38,6 +38,7 @@ CCFILES = \
 chain/chain_pybind.cc \
 chain/chain_supervision_pybind.cc \
 feat/wave_reader_pybind.cc \
+feat/feat_pybind.cc \
 fst/arc_pybind.cc \
 fst/compile_pybind.cc \
 fst/fst_pybind.cc \
