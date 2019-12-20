@@ -24,7 +24,7 @@ class TestFeat(unittest.TestCase):
         # gold set is feature extracted using featbin/compute-mfcc-feats
         gold_reader = SequentialMatrixReader('ark:tests/feat.ark')
         for key, value in reader:
-            print("Validate utterance: {}".format(key))
+            print('Validate utterance: {}'.format(key))
             self.assertEqual(value.SampFreq(), 16000)
 
             wave_data = value.Data()
