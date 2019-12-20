@@ -43,7 +43,6 @@ PYBIND11_MODULE(kaldi_pybind, m) {
   pybind_matrix(m);
   pybind_vector(m);
   pybind_table_types(m);
-  pybind_wave_reader(m);
   pybind_feat(m);
 
   pybind_fst(m);
