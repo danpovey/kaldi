@@ -22,4 +22,4 @@
 
 void pybind_feat(py::module& m);
 
-#endif  // KALDI_PYBIND_FEAT_FEATURE_MFCC_PYBIND_H_
+#endif  // KALDI_PYBIND_FEAT_FEAT_PYBIND_H_

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# Copyright 2019   Microsoft Corporation (author: Xingyu Na)
+# Apache 2.0
+
 import unittest
 import numpy as np
 import os
