@@ -3,14 +3,15 @@
 # Copyright 2019   Microsoft Corporation (author: Xingyu Na)
 # Apache 2.0
 
-import unittest
-import numpy as np
 import os
 import sys
-
-# Add .. to the PYTHONPATH
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
+
+import unittest
+import numpy as np
+
 import kaldi_pybind as k
+
 import kaldi_pybind.feat as feat
 from kaldi import SequentialWaveReader
 from kaldi import SequentialMatrixReader
@@ -19,9 +20,9 @@ class TestFeat(unittest.TestCase):
 
     def test_mfcc(self):
         mfcc = feat.Mfcc(feat.MfccOptions())
-        reader = SequentialWaveReader("ark:tests/wav.ark")
+        reader = SequentialWaveReader('ark:tests/wav.ark')
         # gold set is feature extracted using featbin/compute-mfcc-feats
-        gold_reader = SequentialMatrixReader("ark:tests/feat.ark")
+        gold_reader = SequentialMatrixReader('ark:tests/feat.ark')
         for key, value in reader:
             print("Validate utterance: {}".format(key))
             self.assertEqual(value.SampFreq(), 16000)
@@ -29,7 +30,7 @@ class TestFeat(unittest.TestCase):
             wave_data = value.Data()
             nd = np.array(wave_data, copy=False)
             nsamp = wave_data.NumCols()
-            self.assertAlmostEqual(nsamp, value.Duration() * value.SampFreq(), places = 1)
+            self.assertAlmostEqual(nsamp, value.Duration() * value.SampFreq(), places=1)
 
             waveform = k.FloatSubVector(nd.reshape(nsamp))
             features = k.FloatMatrix(1, 1)
