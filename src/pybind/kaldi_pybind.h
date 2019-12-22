@@ -20,6 +20,7 @@
 #ifndef KALDI_PYBIND_KALDI_PYBIND_H_
 #define KALDI_PYBIND_KALDI_PYBIND_H_
 
+#include <pybind11/numpy.h>
 #include <pybind11/operators.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>

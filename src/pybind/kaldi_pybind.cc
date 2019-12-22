@@ -21,8 +21,8 @@
 
 #include <string>
 
-#include "feat/wave_reader_pybind.h"
 #include "feat/feat_pybind.h"
+#include "feat/wave_reader_pybind.h"
 #include "matrix/matrix_common_pybind.h"
 #include "matrix/matrix_pybind.h"
 #include "matrix/vector_pybind.h"
