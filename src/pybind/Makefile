@@ -37,6 +37,10 @@ endif
 CCFILES = \
 chain/chain_pybind.cc \
 chain/chain_supervision_pybind.cc \
+cudamatrix/cu_device_pybind.cc \
+cudamatrix/cu_matrix_pybind.cc \
+cudamatrix/cu_vector_pybind.cc \
+cudamatrix/cudamatrix_pybind.cc \
 dlpack/dlpack_pybind.cc \
 feat/feat_pybind.cc \
 feat/feature_pybind.cc \
@@ -66,6 +70,7 @@ LIBNAME := kaldi_pybind
 ADDLIBS := \
 ../base/kaldi-base.a \
 ../chain/kaldi-chain.a \
+../cudamatrix/kaldi-cudamatrix.a \
 ../feat/kaldi-feat.a \
 ../fstext/kaldi-fstext.a \
 ../matrix/kaldi-matrix.a \
@@ -101,6 +106,7 @@ clean:
 test: all
 	python3 tests/test_kaldi_pybind.py
 	make -C chain test
+	make -C cudamatrix test
 	make -C dlpack test
 	make -C feat test
 	make -C fst test

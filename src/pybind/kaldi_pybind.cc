@@ -21,6 +21,7 @@
 
 #include <string>
 
+#include "cudamatrix/cudamatrix_pybind.h"
 #include "feat/feat_pybind.h"
 #include "feat/wave_reader_pybind.h"
 #include "matrix/matrix_common_pybind.h"
@@ -52,4 +53,6 @@ PYBIND11_MODULE(kaldi_pybind, m) {
   pybind_nnet3(m);
 
   pybind_dlpack(m);
+
+  pybind_cudamatrix(m);
 }

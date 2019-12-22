@@ -20,13 +20,15 @@
 
 #include "dlpack/dlpack.h"
 
+#include "cudamatrix/cu-matrix.h"
+#include "cudamatrix/cu-vector.h"
 #include "matrix/kaldi-matrix.h"
 #include "matrix/kaldi-vector.h"
 
 using namespace kaldi;
 
 void pybind_dlpack(py::module& m) {
-  m.def("to_subvector", [](py::capsule* capsule) {
+  m.def("ToSubVector", [](py::capsule* capsule) {
     DLManagedTensor* managed_tensor = *capsule;
     // (fangjun): the above assignment will either throw or succeed with a
     // non-null ptr so no need to check for nullptr below
@@ -45,7 +47,7 @@ void pybind_dlpack(py::module& m) {
                             tensor->shape[0]);
   });
 
-  m.def("to_submatrix", [](py::capsule* capsule) {
+  m.def("ToSubMatrix", [](py::capsule* capsule) {
     DLManagedTensor* managed_tensor = *capsule;
 
     auto* tensor = &managed_tensor->dl_tensor;
@@ -62,5 +64,49 @@ void pybind_dlpack(py::module& m) {
     return SubMatrix<float>(reinterpret_cast<float*>(tensor->data),
                             tensor->shape[0], tensor->shape[1],
                             tensor->strides[0]);
+  });
+
+  m.def("ToCuSubVector", [](py::capsule* capsule) {
+#if HAVE_CUDA == 1
+    DLManagedTensor* managed_tensor = *capsule;
+
+    auto* tensor = &managed_tensor->dl_tensor;
+
+    // we support only 1-D tensor
+    KALDI_ASSERT(tensor->ndim == 1);
+
+    // we support only float (single precision, 32-bit) tensor
+    KALDI_ASSERT(tensor->dtype.code == kDLFloat);
+    KALDI_ASSERT(tensor->dtype.bits == 32);
+    KALDI_ASSERT(tensor->dtype.lanes == 1);
+
+    return CuSubVector<float>(reinterpret_cast<float*>(tensor->data),
+                              tensor->shape[0]);
+#else
+      KALDI_ERR << "Kaldi is not compiled with GPU!"
+#endif
+  });
+
+  m.def("ToCuSubMatrix", [](py::capsule* capsule) {
+#if HAVE_CUDA == 1
+    DLManagedTensor* managed_tensor = *capsule;
+
+    auto* tensor = &managed_tensor->dl_tensor;
+
+    // we support only 2-D tensor
+    KALDI_ASSERT(tensor->ndim == 2);
+
+    // we support only float (single precision, 32-bit) tensor
+    KALDI_ASSERT(tensor->dtype.code == kDLFloat);
+    KALDI_ASSERT(tensor->dtype.bits == 32);
+    KALDI_ASSERT(tensor->dtype.lanes == 1);
+
+    // DLPack assumes row major, so we use strides[0]
+    return CuSubMatrix<float>(reinterpret_cast<float*>(tensor->data),
+                              tensor->shape[0], tensor->shape[1],
+                              tensor->strides[0]);
+#else
+      KALDI_ERR << "Kaldi is not compiled with GPU!"
+#endif
   });
 }
