@@ -33,6 +33,8 @@
 #include "chain/chain_pybind.h"
 #include "nnet3/nnet3_pybind.h"
 
+#include "dlpack/dlpack_pybind.h"
+
 PYBIND11_MODULE(kaldi_pybind, m) {
   m.doc() =
       "pybind11 binding of some things from kaldi's "
@@ -48,4 +50,6 @@ PYBIND11_MODULE(kaldi_pybind, m) {
   pybind_fst(m);
   pybind_chain(m);
   pybind_nnet3(m);
+
+  pybind_dlpack(m);
 }

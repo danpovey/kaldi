@@ -37,6 +37,7 @@ endif
 CCFILES = \
 chain/chain_pybind.cc \
 chain/chain_supervision_pybind.cc \
+dlpack/dlpack_pybind.cc \
 feat/feat_pybind.cc \
 feat/feature_pybind.cc \
 feat/wave_reader_pybind.cc \
@@ -100,6 +101,7 @@ clean:
 test: all
 	python3 tests/test_kaldi_pybind.py
 	make -C chain test
+	make -C dlpack test
 	make -C feat test
 	make -C fst test
 	make -C matrix test
@@ -115,7 +117,7 @@ valgrind:
 depend:
 	rm -f .depend.mk
 	for f in $(CCFILES); do \
-		$(CXX) -M -MT "$$(dirname $$f)/$$(basename -s .cc $$f).o" $(CXXFLAGS) $$f >> .depend.mk; \
+    $(CXX) -M -MT "$$(dirname $$f)/$$(basename -s .cc $$f).o" $(CXXFLAGS) $$f >> .depend.mk; \
   done
 
 -include .depend.mk
